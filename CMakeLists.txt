@@ -274,23 +274,36 @@ if(WIN32)
     install(FILES ${SDL2_DLL} ${FFMPEG_DLLS} "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico" 
         DESTINATION ${INSTALL_DIR}
     )
+elseif(NOT WIN32)
+    # On Linux the libraries of SDL and of FFmpeg are the ones of the system,
+    # so the package contains only the program itself.
+    install(TARGETS live-paper RUNTIME DESTINATION bin)
 endif()
 
-if(MSVC)
+# The package for the release. The installer of Windows is built with the WIX
+# toolset, which only exists there; the other platforms get a tarball.
+if(MSVC OR NOT WIN32)
     set(CPACK_PACKAGE_DIRECTORY dist)
-    set(CPACK_GENERATOR WIX ZIP)
     set(CPACK_PACKAGE_NAME LivePaper)
     set(CPACK_PACKAGE_VENDOR Zuranthus)
-    # Both programs get a shortcut in the start menu.
-    set(CPACK_PACKAGE_EXECUTABLES live-paper LivePaper live-paper-console "LivePaper (console)")
     set(CPACK_PACKAGE_INSTALL_DIRECTORY ${CPACK_PACKAGE_NAME})
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.txt")
     set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
     set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/ZMajeh/LivePaper-Win11-Support")
     set(CPACK_PACKAGE_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico")
 
-    set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico")
-    set(CPACK_WIX_UPGRADE_GUID A73EF541-19D7-4E50-8CC6-B4E1BAFB760D)
+    if(MSVC)
+        set(CPACK_GENERATOR WIX ZIP)
+        # Both programs get a shortcut in the start menu.
+        set(CPACK_PACKAGE_EXECUTABLES live-paper LivePaper live-paper-console "LivePaper (console)")
+        set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico")
+        set(CPACK_WIX_UPGRADE_GUID A73EF541-19D7-4E50-8CC6-B4E1BAFB760D)
+    elseif(NOT WIN32)
+        set(CPACK_GENERATOR TGZ)
+        # The name of the file, so that the system can be told apart from the
+        # package for Windows.
+        set(CPACK_SYSTEM_NAME linux-x86_64)
+    endif()
 
     include(CPack)
 endif()

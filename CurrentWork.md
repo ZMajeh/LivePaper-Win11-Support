@@ -64,7 +64,8 @@ These rules apply to **every** task in this project:
 | 23 | The desktop icons are not painted (the video and the clicks work) | ⏸ paused — the fix did not work, see the next steps |
 | 24 | The session of 2026-10-20: deploy, analyse the screenshots, plan | ✅ done |
 | 25 | Fork the project and copy the changes into the new repository | ✅ done — pushed as `17fdb35` |
-| 26 | Fix the CI: the release fails with 403, and the MSVC warnings | 🔄 in progress |
+| 26 | Fix the CI: the release fails with 403, and the MSVC warnings | ✅ done — the release is created |
+| 27 | Publish the program for Linux as well | 🔄 in progress — the CI has to be run |
 
 ---
 
@@ -1141,6 +1142,62 @@ and the Ubuntu job skipped the steps *Package* and *Publish*.
 
 **Status:** compiled and verified on Linux and with MinGW. The CI has to be
 run again to see whether the release is created.
+
+---
+
+### Task 27 — Publish the program for Linux as well ✅ done
+
+**What the user asked for:** the release contained only the program for
+Windows; the program for Linux should be published too.
+
+**The problem that had to be solved first:** the *Publish* step ran in the
+same job as the build, and the matrix of the job builds for both systems at
+the same time. If both of them published, they would have used the **same**
+release and the same tag, and the option `removeArtifacts: true` of the action
+**deletes all the files of the release** before it uploads the new ones — the
+two jobs would have deleted the files of each other. The source of the action
+says so:
+
+```ts
+const releaseAssets = await this.releases.listArtifactsForRelease(releaseId)
+for (const artifact of releaseAssets) {
+    await this.releases.deleteArtifact(asset.id)
+}
+```
+
+**The solution:** the work is split into two jobs.
+
+1. The job `build` builds and packages for every system, and hands the
+   package over with `actions/upload-artifact`.
+2. The job `release` waits for it (`needs: build`), collects the packages of
+   all the systems (`actions/download-artifact` with `merge-multiple: true`)
+   and creates **one** release with all of them.
+
+**What was changed:**
+
+* `CMakeLists.txt`: the package is built for Linux as well now. The
+  installer of Windows is made with the WIX toolset, which only exists there;
+  Linux gets a tarball (`TGZ`) with the program in `bin/`. The libraries of
+  SDL and of FFmpeg are the ones of the system on Linux, so the package
+  contains only the program.
+* `.github/workflows/build.yml`: the two jobs, the collection of the
+  packages, and the tag `latest` is moved to the commit of the build (the
+  action does not move the tag of a release that already exists).
+* `README.md`: the addresses of the releases of the fork, the package for
+  Linux, and the way to build it.
+
+**The expected result:** one release *Development Build* with the three
+files — the installer and the archive for Windows, and the tarball for Linux:
+
+| File | Size |
+| --- | --- |
+| `LivePaper-0.0.0-win64.msi` | 49 MB |
+| `LivePaper-0.0.0-win64.zip` | 49 MB |
+| `LivePaper-0.0.0-linux-x86_64.tar.gz` | 49 kB |
+
+**Status:** compiled and verified on Linux and with MinGW; the package for
+Linux was built and checked locally. The CI has to be run again to confirm
+that the release has all three files.
 
 ---
 

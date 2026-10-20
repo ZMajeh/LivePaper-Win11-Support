@@ -16,13 +16,6 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
 
-    # The release below is created with the built-in token of the repository,
-    # so the job has to be allowed to write the releases. Without this the
-    # step "Publish" fails with
-    # "Error 403: Resource not accessible by integration".
-    permissions:
-      contents: write
-
     steps:
     - name: Install Dependencies Linux
       if: runner.os == 'Linux'
@@ -37,19 +30,58 @@ jobs:
     - name: Build
       run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
       
-    # Only the Windows build is published: the release contains the Windows
-    # program. The Linux build is only checked here, to make sure that the
-    # code still compiles and works on Linux. The configuration has to be
-    # named, because the generator of Visual Studio is a multi-configuration
-    # one.
+    # The package of every system is built here and collected below, so that
+    # there is only **one** release with the programs of all of them. The
+    # configuration has to be named, because the generator of Visual Studio is
+    # a multi-configuration one.
     - name: Package
-      if: runner.os == 'Windows' && github.ref == 'refs/heads/main'
       run: |
         cd build
         cpack -C ${{env.BUILD_TYPE}}
 
+    - name: Upload the package
+      uses: actions/upload-artifact@v4
+      with:
+        name: package-${{ matrix.os }}
+        path: ${{github.workspace}}/build/dist/*.*
+
+  release:
+    # The release is only made for the main branch, and only after every
+    # system has been built.
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    # The release is created with the built-in token of the repository, so the
+    # job has to be allowed to write the releases. Without this the step
+    # "Publish" fails with
+    # "Error 403: Resource not accessible by integration".
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    # The tag "latest" has to point to the commit of the build. The action does
+    # not move the tag of a release that already exists, so it is moved here.
+    - name: Move the tag to the current commit
+      run: |
+        git tag -f latest ${{ github.sha }}
+        git push --force origin refs/tags/latest
+
+    # The packages of all the systems are collected in one folder, so that the
+    # release gets the program for Windows and the one for Linux.
+    - name: Download the packages
+      uses: actions/download-artifact@v4
+      with:
+        path: ${{github.workspace}}/dist
+        pattern: package-*
+        merge-multiple: true
+
     - name: Publish
-      if: runner.os == 'Windows' && github.ref == 'refs/heads/main'
       uses: ncipollo/release-action@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
@@ -63,4 +95,4 @@ jobs:
         tag: latest
         commit: main
         name: "Development Build"
-        artifacts: "${{github.workspace}}/build/dist/*.*"
+        artifacts: "${{github.workspace}}/dist/*.*"

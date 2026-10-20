@@ -1,5 +1,5 @@
 ﻿# LivePaper
-![Build](https://github.com/zuranthus/LivePaper/actions/workflows/build.yml/badge.svg) ![Platforms Windows | Linux](https://img.shields.io/badge/Platforms-Windows%20%7C%20Linux-blue)
+![Build](https://github.com/ZMajeh/LivePaper-Win11-Support/actions/workflows/build.yml/badge.svg) ![Platforms Windows | Linux](https://img.shields.io/badge/Platforms-Windows%20%7C%20Linux-blue)
 
 LivePaper is a lightweight application that displays live wallpapers on Windows and Linux.
 <br>Both gif and video files are supported. If FFmpeg can play the file, LivePaper can show it as your desktop background.
@@ -10,10 +10,12 @@ _Wallpaper art by [Toyoi Yuuta](https://twitter.com/1041uuu)_
 
 ## Installation
 ### Windows
-Use the latest prebuilt binaries: [MSI installer](https://github.com/zuranthus/LivePaper/releases/download/latest/LivePaper-0.0.0-win64.msi) or [portable zip](https://github.com/zuranthus/LivePaper/releases/download/latest/LivePaper-0.0.0-win64.zip).
+Use the latest prebuilt binaries: [MSI installer](https://github.com/ZMajeh/LivePaper-Win11-Support/releases/download/latest/LivePaper-0.0.0-win64.msi) or [portable zip](https://github.com/ZMajeh/LivePaper-Win11-Support/releases/download/latest/LivePaper-0.0.0-win64.zip).
 
 ### Linux
-Build locally from source. Instructions are [here](#build).
+Use the prebuilt package: [tarball](https://github.com/ZMajeh/LivePaper-Win11-Support/releases/download/latest/LivePaper-0.0.0-linux-x86_64.tar.gz). It contains the program in `bin/`; the libraries of SDL and of FFmpeg are the ones of your system.
+
+You can also build it locally from source. Instructions are [here](#build).
 
 ## Usage
 ### Windows
@@ -114,7 +116,7 @@ $ sudo pacman -S cmake sdl2 ffmpeg
 
 Then clone the repository, configure and build with CMake.
 ```bash
-$ git clone https://github.com/zuranthus/LivePaper.git && cd LivePaper
+$ git clone https://github.com/ZMajeh/LivePaper-Win11-Support.git && cd LivePaper-Win11-Support
 $ cmake -B build
 $ cmake --build build
 ```
@@ -122,6 +124,12 @@ To test, run
 ```
 $ ./build/live-paper assets/test.gif &
 ```
+
+To build the package that is published in the release, run
+```bash
+$ cd build && cpack -C Release
+```
+The result is in `build/dist/`.
 
 ### Cross-compiling for Windows from Linux
 The Windows executable can also be built on Linux with the MinGW-w64 toolchain.
