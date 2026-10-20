@@ -64,6 +64,7 @@ These rules apply to **every** task in this project:
 | 23 | The desktop icons are not painted (the video and the clicks work) | ⏸ paused — the fix did not work, see the next steps |
 | 24 | The session of 2026-10-20: deploy, analyse the screenshots, plan | ✅ done |
 | 25 | Fork the project and copy the changes into the new repository | ✅ done — pushed as `17fdb35` |
+| 26 | Fix the CI: the release fails with 403, and the MSVC warnings | 🔄 in progress |
 
 ---
 
@@ -1062,6 +1063,84 @@ and pushed it. The push was verified:
 | A **fresh clone** compared with the working copy | ✅ all 31 files byte-identical |
 | The build of the fresh clone | ✅ exit 0, no warnings |
 | The local branch | ✅ `main` is in sync with `origin/main`, nothing left unstaged |
+
+---
+
+### Task 26 — The CI: the release fails with 403, and the MSVC warnings 🔄 in progress
+
+**What the user reported:** the CI build on the fork **succeeded** — both
+`live-paper.exe` and `live-paper-console.exe` were produced — but the step
+*Publish* failed:
+
+```
+Error: Error 403: Resource not accessible by integration
+  https://docs.github.com/rest/releases/releases#create-a-release
+```
+
+and the Ubuntu job skipped the steps *Package* and *Publish*.
+
+**The three separate problems that were found:**
+
+1. **The 403 — the workflow has no `permissions:` block.** The
+   `ncipollo/release-action` needs `contents: write` to create a release
+   (the documentation of the action says exactly that). The default token of
+   a **fork** only has read access, so the creation of the release is
+   refused. The upstream repository was created in 2021, when the default
+   token still had write access — that is why it worked there and why it
+   does not work in the fork. **The fix:** a `permissions:` block with
+   `contents: write` in the job.
+
+2. **`makeLatest: true` together with `prerelease: true` is not allowed.**
+   GitHub does not let a *prerelease* be marked as the *latest* release — the
+   API answers with an error. The combination was added upstream in December
+   2024 (`b83bf2b`) and **never ran successfully** since: the upstream
+   repository was archived, and the release that is still online is from
+   2021. **The fix:** `makeLatest: false`.
+
+3. **The Ubuntu job skips *Package* and *Publish* — this one is correct.**
+   The steps have the condition `runner.os == 'Windows'`, because the release
+   contains the **Windows** program. The Linux job is there to check that the
+   code still compiles and works on Linux. It must stay that way.
+
+**The warnings of MSVC — one of them is a real bug:**
+
+| Warning | Where | What it is |
+| --- | --- | --- |
+| `C4013: 'strtol' undefined` | `src/main.c:298` | **a real bug** — `<stdlib.h>` is missing |
+| `C4996: 'strcpy'` | `src/platform_windows.c:78` | a possible overflow of the buffer |
+| `C4996: 'sprintf'`, `'vsprintf'` | `src/fail.c:20,22,23` | a possible overflow of the buffer |
+| `C4996: 'strdup'` | `src/main.c:243,277` | the POSIX name, deprecated by MSVC |
+| `C4996: 'fopen'`, `'freopen'` | `src/log.c:30,54,56,57` | the "unsafe" variants of MSVC |
+| `C4244: 'Uint64' to 'double'` | `src/video.c:290` | a wrong type of the field |
+
+* The `strtol` is **a real defect**: the function was used without its
+  header, so the compiler assumed that it returns an `int` — and a `long` is
+  64 bits wide on Linux. The value was truncated. (`<stdlib.h>` is now
+  included.)
+* The `sprintf`/`vsprintf` in `fail.c` and the `strcpy` in
+  `platform_windows.c` could **overflow** their buffers — they are now
+  `snprintf`/`vsnprintf` and `snprintf`, which are the safe versions and are
+  part of C99.
+* The `decode_start_ms` field was a `double` that holds a tick count — it is
+  now a `Uint64`, so the subtraction of the two tick counts is exact.
+* The rest (`fopen`, `freopen`, `strdup`) are the standard functions of C99;
+  MSVC only warns about them. They are silenced with `_CRT_SECURE_NO_WARNINGS`
+  and `_CRT_NONSTDC_NO_DEPRECATE`, which are only defined for MSVC.
+
+**What was changed:**
+
+* `.github/workflows/build.yml`: the `permissions:` block, `makeLatest: false`,
+  `actions/checkout@v4` (v2 is deprecated), `cpack -C Release` (the
+  configuration has to be named for a multi-configuration generator), and a
+  comment that says why the Linux job does not publish.
+* `src/main.c`: `<stdlib.h>` is included now.
+* `src/fail.c`, `src/platform_windows.c`: the safe versions of the functions.
+* `src/video.c`: the type of `decode_start_ms`.
+* `CMakeLists.txt`: the two definitions for MSVC, the console program is
+  installed as well, and the address of the repository in the package.
+
+**Status:** compiled and verified on Linux and with MinGW. The CI has to be
+run again to see whether the release is created.
 
 ---
 

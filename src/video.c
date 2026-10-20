@@ -40,7 +40,7 @@ struct Video {
     struct VideoFileInfo file_info;
     uint64_t fps_window_start_ms;
     unsigned long long fps_window_frames;
-    double decode_start_ms;
+    Uint64 decode_start_ms;   // a tick count, not a duration
 };
 
 static bool DecodeNextFrame(AVFrame *frame, double *frame_end_time, struct Video *v) {

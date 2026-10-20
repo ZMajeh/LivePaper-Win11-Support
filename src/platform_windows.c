@@ -75,7 +75,9 @@ static void SaveConfig(const struct Context *context) {
     if (PathIsRelativeA(context->file)) {
         _fullpath(file, context->file, MAX_PATH);
     } else {
-        strcpy(file, context->file);
+        // snprintf() instead of strcpy(): the path of the file is not
+        // necessarily shorter than MAX_PATH.
+        snprintf(file, sizeof(file), "%s", context->file);
     }
     SHCreateDirectoryExA(NULL, config_dir, NULL);
     FILE *f = fopen(config_file, "wt");

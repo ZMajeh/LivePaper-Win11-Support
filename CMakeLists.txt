@@ -185,6 +185,14 @@ target_link_libraries(live-paper PRIVATE
 target_compile_definitions(live-paper PRIVATE
     "$<$<PLATFORM_ID:Windows>:_WIN32_WINNT=0x0601;WINVER=0x0601>"
 )
+# MSVC warns about the standard functions of C99 (fopen, strdup, ...) and
+# offers its own "secure" variants instead. The program is written in plain
+# C99 and has to build with MinGW and with GCC as well, so the warnings are
+# switched off instead of using the variants of MSVC.
+target_compile_definitions(live-paper PRIVATE
+    "$<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>"
+    "$<$<C_COMPILER_ID:MSVC>:_CRT_NONSTDC_NO_DEPRECATE>"
+)
 add_custom_command(TARGET live-paper POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico"
@@ -231,6 +239,10 @@ if(WIN32)
     target_compile_definitions(live-paper-console PRIVATE
         SDL_MAIN_HANDLED
         "_WIN32_WINNT=0x0601;WINVER=0x0601"
+        # The same as for the program itself: the standard functions of C99 are
+        # used, so the warnings of MSVC are switched off.
+        "$<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>"
+        "$<$<C_COMPILER_ID:MSVC>:_CRT_NONSTDC_NO_DEPRECATE>"
     )
     target_link_libraries(live-paper-console PRIVATE
         "$<$<PLATFORM_ID:Windows>:tray::tray;shell32;shlwapi;psapi>"
@@ -256,6 +268,9 @@ endif()
 if(WIN32)
     set(INSTALL_DIR ".")
     install(TARGETS live-paper RUNTIME DESTINATION ${INSTALL_DIR})
+    # The console variant is useful for the diagnostics, so it is part of the
+    # package as well.
+    install(TARGETS live-paper-console RUNTIME DESTINATION ${INSTALL_DIR})
     install(FILES ${SDL2_DLL} ${FFMPEG_DLLS} "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico" 
         DESTINATION ${INSTALL_DIR}
     )
@@ -266,11 +281,12 @@ if(MSVC)
     set(CPACK_GENERATOR WIX ZIP)
     set(CPACK_PACKAGE_NAME LivePaper)
     set(CPACK_PACKAGE_VENDOR Zuranthus)
-    set(CPACK_PACKAGE_EXECUTABLES live-paper LivePaper)
+    # Both programs get a shortcut in the start menu.
+    set(CPACK_PACKAGE_EXECUTABLES live-paper LivePaper live-paper-console "LivePaper (console)")
     set(CPACK_PACKAGE_INSTALL_DIRECTORY ${CPACK_PACKAGE_NAME})
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.txt")
     set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
-    set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/zuranthus/LivePaper")
+    set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/ZMajeh/LivePaper-Win11-Support")
     set(CPACK_PACKAGE_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico")
 
     set(CPACK_WIX_PRODUCT_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.ico")

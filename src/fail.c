@@ -15,12 +15,20 @@ void MessageAndQuit(int line, const char *file, const char *message, ...) {
     va_list args;
     va_start(args, message);
 
+    // The safe versions of the functions are used: the message comes from the
+    // program itself, but a long path or a long message would overflow the
+    // buffer with sprintf().
     char buf[4096] = {0};
-    int pos = 0;
-    pos += sprintf(buf + pos, "Error %s:%i", file, line);
+    int pos = snprintf(buf, sizeof(buf), "Error %s:%i", file, line);
+    if (pos < 0) pos = 0;
+    if ((size_t)pos >= sizeof(buf)) pos = (int)sizeof(buf) - 1;
     if (message) {
-        pos += sprintf(buf + pos, ": ");
-        pos += vsprintf(buf + pos, message, args);
+        int written = snprintf(buf + pos, sizeof(buf) - pos, ": ");
+        if (written > 0) pos += written;
+        if ((size_t)pos >= sizeof(buf)) pos = (int)sizeof(buf) - 1;
+        written = vsnprintf(buf + pos, sizeof(buf) - pos, message, args);
+        if (written > 0) pos += written;
+        if ((size_t)pos >= sizeof(buf)) pos = (int)sizeof(buf) - 1;
     }
     va_end(args);
 

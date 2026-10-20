@@ -16,13 +16,20 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-latest]
 
+    # The release below is created with the built-in token of the repository,
+    # so the job has to be allowed to write the releases. Without this the
+    # step "Publish" fails with
+    # "Error 403: Resource not accessible by integration".
+    permissions:
+      contents: write
+
     steps:
     - name: Install Dependencies Linux
       if: runner.os == 'Linux'
       run: sudo apt-get -yq update && sudo apt-get -yq install cmake libsdl2-dev libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavdevice-dev
     
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
 
     - name: Configure CMake
       run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
@@ -30,11 +37,16 @@ jobs:
     - name: Build
       run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
       
+    # Only the Windows build is published: the release contains the Windows
+    # program. The Linux build is only checked here, to make sure that the
+    # code still compiles and works on Linux. The configuration has to be
+    # named, because the generator of Visual Studio is a multi-configuration
+    # one.
     - name: Package
       if: runner.os == 'Windows' && github.ref == 'refs/heads/main'
       run: |
         cd build
-        cpack
+        cpack -C ${{env.BUILD_TYPE}}
 
     - name: Publish
       if: runner.os == 'Windows' && github.ref == 'refs/heads/main'
@@ -45,7 +57,9 @@ jobs:
         artifactErrorsFailBuild: true
         prerelease: true
         removeArtifacts: true
-        makeLatest: true
+        # A prerelease cannot be the "latest" release: GitHub refuses that
+        # combination with an error.
+        makeLatest: false
         tag: latest
         commit: main
         name: "Development Build"
