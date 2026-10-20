@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "log.h"
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -21,6 +23,11 @@ void MessageAndQuit(int line, const char *file, const char *message, ...) {
         pos += vsprintf(buf + pos, message, args);
     }
     va_end(args);
+
+    // Also record the error in the log, so that it is visible even when there
+    // is no console (e.g. on Windows) or when a log file was requested.
+    LOG_ERROR("%s", buf);
+
 #ifdef _WIN32
     MessageBoxA(NULL, buf, "LivePaper Error", MB_OK | MB_ICONERROR | MB_TASKMODAL);
 #else
@@ -29,5 +36,6 @@ void MessageAndQuit(int line, const char *file, const char *message, ...) {
     fflush(stdout);
 #endif
     
+    LogShutdown();
     exit(1);
 }
