@@ -63,7 +63,7 @@ These rules apply to **every** task in this project:
 | 22 | Strategy 6 works — make it the default and deploy the build | ✅ done |
 | 23 | The desktop icons are not painted (the video and the clicks work) | ⏸ paused — the fix did not work, see the next steps |
 | 24 | The session of 2026-10-20: deploy, analyse the screenshots, plan | ✅ done |
-| 25 | Fork the project and copy the changes into the new repository | ✅ done |
+| 25 | Fork the project and copy the changes into the new repository | ✅ done — pushed as `17fdb35` |
 
 ---
 
@@ -1050,6 +1050,18 @@ cd ~/git/LivePaper-Win11-Support
 git commit -m "Fix the wallpaper on Windows 11 24H2, add diagnostics and Linux build"
 git push origin main
 ```
+
+**The result:** the user committed as `17fdb35` *"Adding windows 11 support"*
+and pushed it. The push was verified:
+
+| Check | Result |
+| --- | --- |
+| The fork on GitHub | ✅ `ZMajeh/LivePaper-Win11-Support`, a fork of `zuranthus/LivePaper` |
+| The history of `main` | ✅ `17fdb35` on top of `9332440` — the upstream history is intact |
+| The files in the tree of `main` | ✅ 31 files, exactly the ones of the working copy |
+| A **fresh clone** compared with the working copy | ✅ all 31 files byte-identical |
+| The build of the fresh clone | ✅ exit 0, no warnings |
+| The local branch | ✅ `main` is in sync with `origin/main`, nothing left unstaged |
 
 ---
 
