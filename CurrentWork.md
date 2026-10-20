@@ -65,7 +65,7 @@ These rules apply to **every** task in this project:
 | 24 | The session of 2026-10-20: deploy, analyse the screenshots, plan | ✅ done |
 | 25 | Fork the project and copy the changes into the new repository | ✅ done — pushed as `17fdb35` |
 | 26 | Fix the CI: the release fails with 403, and the MSVC warnings | ✅ done — the release is created |
-| 27 | Publish the program for Linux as well | 🔄 in progress — the CI has to be run |
+| 27 | Publish the program for Linux as well | ✅ done — the release has all three files |
 
 ---
 
@@ -1186,18 +1186,22 @@ for (const artifact of releaseAssets) {
 * `README.md`: the addresses of the releases of the fork, the package for
   Linux, and the way to build it.
 
-**The expected result:** one release *Development Build* with the three
-files — the installer and the archive for Windows, and the tarball for Linux:
+**The result:** the CI published the release *Development Build* with all
+three files, and the tag `latest` points to the commit of the build
+(`b4720df`):
 
 | File | Size |
 | --- | --- |
-| `LivePaper-0.0.0-win64.msi` | 49 MB |
-| `LivePaper-0.0.0-win64.zip` | 49 MB |
-| `LivePaper-0.0.0-linux-x86_64.tar.gz` | 49 kB |
+| `LivePaper-0.0.0-win64.msi` | 49.5 MB |
+| `LivePaper-0.0.0-win64.zip` | 49.2 MB |
+| `LivePaper-0.0.0-linux-x86_64.tar.gz` | 50 kB |
 
-**Status:** compiled and verified on Linux and with MinGW; the package for
-Linux was built and checked locally. The CI has to be run again to confirm
-that the release has all three files.
+The release is here:
+<https://github.com/ZMajeh/LivePaper-Win11-Support/releases/tag/latest>
+
+**Everything is in the fork** — the release is created in
+`ZMajeh/LivePaper-Win11-Support`, not in the upstream repository (which is
+archived and read-only anyway).
 
 ---
 
