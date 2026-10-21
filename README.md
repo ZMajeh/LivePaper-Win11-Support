@@ -19,12 +19,118 @@ You can also build it locally from source. Instructions are [here](#build).
 
 ## Usage
 ### Windows
-Simply run live-paper.exe. You can make LivePaper run automatically at startup by following [this guide](https://support.microsoft.com/en-us/windows/add-an-app-to-run-automatically-at-startup-in-windows-10-150da165-dcd9-7230-517b-cf3c295d89dd) from Microsoft (works for Windows 7+).
-
-On its first run, LivePaper will open a window to choose the wallpaper file. The app will remember this file and play it the next time you run LivePaper. You can also change the wallpaper file or quit the app via the tray icon.  
+Simply run live-paper.exe. On its first run, LivePaper will open a window to choose the wallpaper file. The app will remember this file and play it the next time you run LivePaper. You can also change the wallpaper file or quit the app via the tray icon.  
 ![Close with tray icon](assets/tray.png)
 
 Note that if LivePaper quits due to an error, the remembered wallpaper file will be cleared. The next time the app is started, you will need to choose the wallpaper file again.
+
+#### Start LivePaper automatically on Windows 11
+
+There are three ways to do it. The scheduled task is the most controllable one, because it lets you
+start the app with a delay and with the wallpaper file as an argument.
+
+**1. The scheduled task (recommended)**
+
+LivePaper is a GUI program that attaches its window to the desktop of the *interactive* user
+session, so the task has to run **"only when the user is logged on"**. A task that runs "whether the
+user is logged on or not" (or at boot, before the logon) runs in a non-interactive session, where
+there is no desktop to attach the wallpaper to.
+
+Open the Task Scheduler (`Win` + `R`, then `taskschd.msc`), right-click **Task Scheduler Library** and
+choose **Create Task...** (not "Create Basic Task"). Then:
+
+| Tab | Setting | Value |
+| --- | --- | --- |
+| General | Name | `LivePaper` |
+| General | Run only when user is logged on | selected (do *not* pick "Run whether the user is logged on or not") |
+| General | Run with highest privileges | not needed |
+| Triggers | New... → At log on | Specific user: your account |
+| Triggers | Advanced... → Delay task for | `30 seconds` |
+| Actions | New... → Action | `Start a program` |
+| Actions | Program/script | `C:\Program Files\LivePaper\live-paper.exe` |
+| Actions | Add arguments | `"C:\Users\mundh\OneDrive\Documents\Video wallpaper final(1).gif"` |
+| Actions | Start in | `C:\Program Files\LivePaper` |
+| Conditions | Start the task only if the computer is on AC power | unchecked (on a laptop) |
+| Settings | Stop the task if it runs longer than | `PT0S` (unlimited) |
+| Settings | If the task fails, restart every | `1 minute`, up to `3` times |
+
+The four settings that are easy to get wrong:
+
+* **"Start in"** must be the installation folder. LivePaper loads its tray icon from the relative
+  path `icon.ico`, which is resolved against the working directory of the process; without this the
+  program starts, but the tray icon is missing and the app can only be closed with the task manager.
+* The **arguments** have to be quoted, because the path contains spaces and parentheses.
+* The **delay** is needed because LivePaper needs the desktop of Explorer to exist before it can
+  attach the wallpaper to it. Without the delay the program can start too early, fail with
+  "can't find the Progman window of the desktop" and show an error box at logon.
+* The **execution time limit** of a task is 3 days by default. A live wallpaper runs until the user
+  logs off, so the limit has to be removed.
+
+The same task from the command line (PowerShell, run it as administrator):
+
+```powershell
+$action = New-ScheduledTaskAction -Execute 'C:\Program Files\LivePaper\live-paper.exe' `
+    -Argument '"C:\Users\mundh\OneDrive\Documents\Video wallpaper final(1).gif"' `
+    -WorkingDirectory 'C:\Program Files\LivePaper'
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User 'mundh'
+$trigger.Delay = 'PT30S'
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
+$principal = New-ScheduledTaskPrincipal -UserId 'mundh' -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName 'LivePaper' -Action $action -Trigger $trigger `
+    -Settings $settings -Principal $principal `
+    -Description 'Starts the LivePaper live wallpaper at logon'
+```
+
+(`LogonType Interactive` is the equivalent of "run only when the user is logged on".)
+
+`schtasks` can create the task as well, but it has no option for the working directory, so the tray
+icon would be missing:
+
+```bash
+schtasks /Create /TN "LivePaper" /SC ONLOGON /DELAY 0000:30 /IT /F \
+  /TR "\"C:\Program Files\LivePaper\live-paper.exe\" \"C:\Users\mundh\OneDrive\Documents\Video wallpaper final(1).gif\""
+```
+
+Test the task without rebooting:
+
+```bash
+schtasks /Run /TN "LivePaper"
+schtasks /Query /TN "LivePaper" /V /FO LIST
+```
+
+If the program does not start, the log of the task scheduler is in the Event Viewer under
+*Applications and Services Logs → Microsoft → Windows → TaskScheduler → Operational*, and the
+diagnostics of the program itself can be written to a file with the console variant:
+`live-paper-console.exe --verbose --log-file=live-paper.log`.
+
+**2. The startup folder**
+
+`Win` + `R`, then `shell:startup`, and put a shortcut to `live-paper.exe` there. Right-click the
+shortcut → *Properties* → *Shortcut* tab → set *Start in* to `C:\Program Files\LivePaper` and put the
+path of the wallpaper into *Target*, after the program:
+
+```
+"C:\Program Files\LivePaper\live-paper.exe" "C:\Users\mundh\OneDrive\Documents\Video wallpaper final(1).gif"
+```
+
+**3. The registry (the "Startup apps" list of Windows 11)**
+
+`Win` + `R`, then `regedit`, and create this value:
+
+```
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
+    LivePaper (REG_SZ) = "C:\Program Files\LivePaper\live-paper.exe" "C:\Users\mundh\OneDrive\Documents\Video wallpaper final(1).gif"
+```
+
+The entries of this key are the ones that are listed in *Task Manager → Startup apps* and in
+*Settings → Apps → Startup*, where they can be enabled and disabled by the user.
+
+**A note about OneDrive**
+
+If the wallpaper file is stored in OneDrive, make sure that it is available locally at the logon:
+right-click the file → *Always keep on this device*. Otherwise the file can still be a cloud
+placeholder when the task starts, the program cannot read it and it quits with an error.
 
 ### Linux
 LivePaper is a console application on Linux.

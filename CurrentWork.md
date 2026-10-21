@@ -66,6 +66,7 @@ These rules apply to **every** task in this project:
 | 25 | Fork the project and copy the changes into the new repository | ✅ done — pushed as `17fdb35` |
 | 26 | Fix the CI: the release fails with 403, and the MSVC warnings | ✅ done — the release is created |
 | 27 | Publish the program for Linux as well | ✅ done — the release has all three files |
+| 28 | The instructions for the automatic start on Windows 11 (scheduled task) | ✅ done — documented in the README |
 
 ---
 
@@ -1202,6 +1203,49 @@ The release is here:
 **Everything is in the fork** — the release is created in
 `ZMajeh/LivePaper-Win11-Support`, not in the upstream repository (which is
 archived and read-only anyway).
+
+---
+
+### Task 28 — The automatic start on Windows 11 (scheduled task) ✅ done
+
+**What was asked for:** the way to start LivePaper automatically on Windows 11,
+without changing the program. The program is installed in
+`C:\Program Files\LivePaper\live-paper.exe`, and the wallpaper is
+`C:\Users\mundh\OneDrive\Documents\Video wallpaper final(1).gif`.
+
+**What was done:** the instructions were added to the *Usage → Windows* section
+of the README — the scheduled task (with the GUI, with PowerShell and with
+`schtasks`), the startup folder and the registry key.
+
+**The details that only matter because of the way the program is written:**
+
+* **"Run only when the user is logged on", not at boot.** The program attaches
+  its window to the desktop of the *interactive* session
+  (`src/platform_windows.c`, `FindCurrentDesktopProgman()`). A task that runs
+  at the boot or "whether the user is logged on or not" runs in a
+  non-interactive session, where there is no desktop for the wallpaper.
+* **"Start in" must be `C:\Program Files\LivePaper`.** The tray icon is loaded
+  from the relative path `icon.ico` (`src/platform_windows.c`, the `tray`
+  structure), which is resolved against the working directory of the process.
+  The default working directory of a task is `C:\Windows\System32`, so without
+  this setting the program would start, but the tray icon would be missing —
+  and the tray icon is the only way to quit the program. `schtasks` has no
+  option for the working directory, which is why the GUI and the PowerShell
+  variants are the recommended ones.
+* **A delay of 30 seconds.** The program needs the desktop of Explorer to
+  exist before it can attach the wallpaper to it; if it starts too early it
+  fails with "can't find the Progman window of the desktop" and shows an error
+  box at the logon.
+* **The wallpaper is passed as an argument.** Without a file on the command
+  line the program opens a file selection dialog (`PlatformInitGuiMode()`),
+  which is not what one wants at the logon.
+* **The execution time limit of the task has to be removed.** It is 3 days by
+  default, and a live wallpaper runs until the logoff.
+* **The file is in OneDrive.** It has to be marked as "Always keep on this
+  device", otherwise it can still be a cloud placeholder when the task starts,
+  and the program cannot read it (`CheckFileReadable()` in `src/video.c`).
+
+**No source code was changed** — the task was a documentation one.
 
 ---
 
