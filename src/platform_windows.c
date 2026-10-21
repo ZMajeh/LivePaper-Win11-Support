@@ -24,10 +24,16 @@
 
 #include "fail.h"
 #include "log.h"
+#include "dock.h"
 
 extern Uint32 g_open_file_event;
 
 static char* OpenVideoFile();
+
+// The items of the menu of the tray icon and the tray itself. They are
+// defined below, but the switch of the dock bar needs them.
+static struct tray_menu g_tray_menu_items[];
+static struct tray tray;
 
 static void TrayQuit(struct tray_menu *item) {
     SDL_QuitEvent event;
@@ -47,17 +53,45 @@ static void TraySetWallpaper(struct tray_menu *item) {
     SDL_PushEvent(&event);
 }
 
+// The item of the tray menu that switches the dock bar on and off. The check
+// mark of the item shows whether the bar is enabled.
+static void TrayToggleDock(struct tray_menu *item) {
+    if (!g_dock) return;
+    bool enabled = !DockIsEnabled(g_dock);
+    DockSetEnabled(g_dock, enabled);
+    // The check mark of the item has to be updated.
+    g_tray_menu_items[2].checked = enabled ? 1 : 0;
+    tray_update(&tray);
+    LOG_INFO("the dock bar was switched %s from the tray menu", enabled ? "on" : "off");
+}
+
+// The items of the menu of the tray icon. The third one is the switch of the
+// dock bar.
+static struct tray_menu g_tray_menu_items[] = {
+    {.text = "Live Paper", .disabled = true},
+    {.text = "-"},
+    {.text = "Dock bar", .checked = true, .cb = &TrayToggleDock},
+    {.text = "-"},
+    {.text = "Set wallpaper...", .cb = &TraySetWallpaper},
+    {.text = "Quit", .cb = &TrayQuit},
+    {.text = NULL},
+};
+
 static struct tray tray = {
     .icon = "icon.ico",
-    .menu = (struct tray_menu[]){{.text = "Live Paper", .disabled = true},
-                                {.text = "-"},
-                                {.text = "Set wallpaper...", .cb = &TraySetWallpaper},
-                                {.text = "Quit", .cb = &TrayQuit},
-                                {.text = NULL}},
+    .menu = g_tray_menu_items,
 };
 
 static char config_dir[MAX_PATH];
 static char config_file[MAX_PATH];
+
+// The window of the dock bar. It has to follow the wallpaper when the user
+// switches to another virtual desktop.
+static SDL_Window *g_dock_window = NULL;
+
+// Puts the bar of the dock directly above the window of the desktop. It is
+// defined below the function that creates the window of the bar.
+static void PlaceDockAboveDesktop(void);
 
 static void InitConfigPath() {
     if (config_file[0]) return; // already initialized
@@ -478,9 +512,11 @@ enum {
 // The way the layer of the desktop icons is prepared, and whether the message
 // 0x052c is sent to the Progman window. They are set from the command line.
 //
-// The default is ICONS_REFRESH: it is the only mode that removes the snapshot
-// of the desktop, which is what keeps the icons from being painted.
-static int g_icons_mode = ICONS_REFRESH;
+// The default is ICONS_NONE: the desktop icons are switched off on purpose.
+// The user asked for the bar of the dock instead of them, and the layer of
+// the icons is in the way of the wallpaper (it is the layer that keeps the
+// snapshot of the desktop, which hides the wallpaper).
+static int g_icons_mode = ICONS_NONE;
 static bool g_prepare_desktop = true;
 
 void PlatformSetDesktopIconsMode(int mode) {
@@ -927,6 +963,141 @@ bool PlatformAttachWallpaper(struct Context *context, int strategy) {
 // painted again, which doesn't make them flicker.
 #define ICON_REFRESH_ROUNDS 4
 
+// ---------------------------------------------------------------------------
+// The dock bar
+// ---------------------------------------------------------------------------
+
+// The window of the bar. It is a top level window, so that it is above the
+// wallpaper and it gets the mouse clicks. It must not steal the focus from
+// the desktop, and it must not show up in the task bar.
+//
+// The window is always visible: it is hidden by moving it above the screen,
+// so that it cannot get the clicks of the desktop and SDL keeps the state of
+// the window in sync.
+SDL_Window *PlatformCreateDockWindow(int width, int height) {
+    SDL_Window *window = SDL_CreateWindow("live-paper-dock", 0, -height, width, height,
+                                          SDL_WINDOW_BORDERLESS);
+    if (!window) {
+        LOG_WARN("the window of the dock bar could not be created: %s", SDL_GetError());
+        return NULL;
+    }
+
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (SDL_GetWindowWMInfo(window, &info)) {
+        HWND hwnd = info.info.win.window;
+        LONG style = GetWindowLong(hwnd, GWL_STYLE);
+        // A window without a border and without a title.
+        style = (style & ~WS_CAPTION) & ~WS_THICKFRAME;
+        SetWindowLong(hwnd, GWL_STYLE, style);
+
+        LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+        // The bar must not take the focus away from the desktop, otherwise
+        // the desktop icons stop working.
+        ex_style |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+        ex_style &= ~WS_EX_APPWINDOW;
+        SetWindowLong(hwnd, GWL_EXSTYLE, ex_style);
+    }
+
+    // The bar belongs to the virtual desktop that is shown now: it has to
+    // follow the wallpaper when the user switches to another one.
+    g_dock_window = window;
+    PlaceDockAboveDesktop();
+    return window;
+}
+
+// Puts the bar of the dock directly above the window of the desktop, so that
+// it is visible over the wallpaper and it gets the mouse clicks. It is below
+// the other applications, like the wallpaper itself.
+static void PlaceDockAboveDesktop(void) {
+    if (!g_dock_window) return;
+    // The window of the desktop of the virtual desktop that is shown now.
+    HWND progman = FindCurrentDesktopProgman();
+    if (!progman) return;
+
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(g_dock_window, &info)) return;
+    HWND dock_hwnd = info.info.win.window;
+
+    // The window that is directly above the desktop. The bar is inserted
+    // below it, so that it ends up directly above the desktop.
+    //
+    // The bar has to be above the desktop and not only above the wallpaper:
+    // the layer of the desktop icons is a child of the window of the desktop,
+    // and it would take the clicks of the bar away.
+    HWND above = GetWindow(progman, GW_HWNDPREV);
+    if (above == dock_hwnd) {
+        // The bar is already in the right place: the window above it is the
+        // one that is used.
+        above = GetWindow(above, GW_HWNDPREV);
+    }
+    SetWindowPos(dock_hwnd, above ? above : HWND_TOP, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    LOG_DEBUG("the bar of the dock was placed above the desktop");
+}
+
+void PlatformDestroyDockWindow(SDL_Window *window) {
+    if (g_dock_window == window) g_dock_window = NULL;
+    if (window) SDL_DestroyWindow(window);
+}
+
+void PlatformSetDockPosition(SDL_Window *window, int x, int y) {
+    if (!window) return;
+    // The window is moved with the API of Windows, because SDL would activate
+    // the window when it moves it.
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (SDL_GetWindowWMInfo(window, &info)) {
+        SetWindowPos(info.info.win.window, NULL, x, y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        return;
+    }
+    SDL_SetWindowPosition(window, x, y);
+}
+
+void PlatformGetCursorPos(int *x, int *y) {
+    POINT point;
+    if (!GetCursorPos(&point)) {
+        *x = 0;
+        *y = 0;
+        return;
+    }
+    *x = (int)point.x;
+    *y = (int)point.y;
+}
+
+void PlatformGetScreenSize(int *width, int *height) {
+    *width = GetSystemMetrics(SM_CXSCREEN);
+    *height = GetSystemMetrics(SM_CYSCREEN);
+}
+
+bool PlatformGetDockConfigPath(char *buf, size_t buf_size) {
+    InitConfigPath();
+    if (!config_dir[0]) return false;
+    // The folder of the settings is created, if it does not exist yet.
+    SHCreateDirectoryExA(NULL, config_dir, NULL);
+    snprintf(buf, buf_size, "%s\\dock.txt", config_dir);
+    return true;
+}
+
+// Moves the window of the bar to the virtual desktop that is shown now, so
+// that the bar is on the same desktop as the wallpaper.
+static void MoveDockToCurrentDesktop(void) {
+    if (!g_dock_window) return;
+    LpVirtualDesktopManager *manager = GetVirtualDesktopManager();
+    if (!manager) return;
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(g_dock_window, &info)) return;
+    GUID desktop_id;
+    if (!GetCurrentVirtualDesktopId(&desktop_id)) return;
+    HRESULT hr = manager->vtbl->MoveWindowToDesktop(manager, info.info.win.window, desktop_id);
+    if (FAILED(hr)) {
+        LOG_DEBUG("the bar of the dock could not be moved to the virtual desktop");
+    }
+}
+
 // Makes the layer of the desktop icons transparent again. It is called once
 // the first frames are drawn, because the shell can create the snapshot of the
 // desktop again when the wallpaper window is shown.
@@ -1147,6 +1318,10 @@ static void AttachWallpaperToCurrentDesktop(struct Context *context) {
                  (void *)progman);
     else
         LOG_WARN("the wallpaper is not visible after attaching it to %p", (void *)progman);
+
+    // The bar of the dock has to be placed above the desktop again, because
+    // the wallpaper was moved to another window.
+    PlaceDockAboveDesktop();
 }
 
 void PlatformUpdate(struct Context *context) {
@@ -1166,6 +1341,9 @@ void PlatformUpdate(struct Context *context) {
             LOG_INFO("the virtual desktop has changed, attaching the wallpaper again");
             last_desktop = current;
             AttachWallpaperToCurrentDesktop(context);
+            // The bar of the dock has to be on the same virtual desktop as
+            // the wallpaper, otherwise it is not visible.
+            MoveDockToCurrentDesktop();
         }
     }
 }

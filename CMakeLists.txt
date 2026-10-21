@@ -168,6 +168,8 @@ add_executable(live-paper
     $<$<PLATFORM_ID:Linux>:src/platform_linux.c>
     $<$<PLATFORM_ID:Darwin>:src/platform_macos.c>
     src/main.c src/fail.c src/video.c src/log.c src/sysinfo.c
+    src/dock.c src/dock_ui.c src/dock_font.c src/dock_metrics.c
+    src/dirlist.c src/launcher.c
 )
 set_target_properties(live-paper PROPERTIES 
     WIN32_EXECUTABLE $<PLATFORM_ID:Windows>
@@ -175,7 +177,7 @@ set_target_properties(live-paper PROPERTIES
 )
 target_link_libraries(live-paper PRIVATE
     $<$<BOOL:${MINGW}>:mingw32>
-    "$<$<PLATFORM_ID:Windows>:SDL2::SDL2main;tray::tray;shell32;shlwapi;psapi;ole32>"
+    "$<$<PLATFORM_ID:Windows>:SDL2::SDL2main;tray::tray;shell32;shlwapi;psapi;ole32;iphlpapi;pdh>"
     "$<$<PLATFORM_ID:Linux>:m;X11>"
     SDL2::SDL2 FFmpeg::FFmpeg argtable::argtable
 )
@@ -229,6 +231,8 @@ if(WIN32)
     add_executable(live-paper-console
         src/platform_windows.c assets/win.rc
         src/main.c src/fail.c src/video.c src/log.c src/sysinfo.c
+        src/dock.c src/dock_ui.c src/dock_font.c src/dock_metrics.c
+        src/dirlist.c src/launcher.c
     )
     set_target_properties(live-paper-console PROPERTIES
         WIN32_EXECUTABLE FALSE
@@ -245,7 +249,7 @@ if(WIN32)
         "$<$<C_COMPILER_ID:MSVC>:_CRT_NONSTDC_NO_DEPRECATE>"
     )
     target_link_libraries(live-paper-console PRIVATE
-        "$<$<PLATFORM_ID:Windows>:tray::tray;shell32;shlwapi;psapi>"
+        "$<$<PLATFORM_ID:Windows>:tray::tray;shell32;shlwapi;psapi;ole32;iphlpapi;pdh>"
         SDL2::SDL2 FFmpeg::FFmpeg argtable::argtable
     )
     add_custom_command(TARGET live-paper-console POST_BUILD

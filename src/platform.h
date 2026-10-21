@@ -97,3 +97,37 @@ void PlatformDumpWindows(void);
 // Makes the layer of the desktop icons transparent again, so that the
 // wallpaper is visible below the icons. It does nothing on the other systems.
 void PlatformRefreshDesktopIcons(void);
+
+// ---------------------------------------------------------------------------
+// The dock bar
+// ---------------------------------------------------------------------------
+
+// The bar of the dock is a separate top level window: it has to be above the
+// wallpaper, but it must not steal the focus from the desktop and it must
+// not take the clicks of the desktop away.
+//
+// The bar hides itself by moving above the screen, so that it cannot get the
+// clicks of the desktop: no special style is needed for that.
+
+// Creates the window of the bar. It is a borderless window at the top of
+// the screen. Returns NULL if the window could not be created.
+SDL_Window *PlatformCreateDockWindow(int width, int height);
+
+// Destroys the window of the bar.
+void PlatformDestroyDockWindow(SDL_Window *window);
+
+// Moves the window of the bar. The y coordinate is negative when the bar is
+// hidden above the screen.
+void PlatformSetDockPosition(SDL_Window *window, int x, int y);
+
+// The position of the mouse on the whole screen. The bar has no focus, so
+// it does not get the mouse events of the desktop: the position has to be
+// asked for.
+void PlatformGetCursorPos(int *x, int *y);
+
+// The size of the screen of the desktop.
+void PlatformGetScreenSize(int *width, int *height);
+
+// The path of the file with the items of the bar. It is next to the other
+// settings of the program.
+bool PlatformGetDockConfigPath(char *buf, size_t buf_size);

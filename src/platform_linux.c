@@ -5,6 +5,9 @@
 #include <X11/Xatom.h>
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "fail.h"
 #include "log.h"
@@ -58,6 +61,56 @@ void PlatformSetPrepareDesktop(bool enable) {
 }
 
 void PlatformRefreshDesktopIcons(void) {
+}
+
+// The window of the bar of the dock. On Linux it is an ordinary window of
+// the window manager, so it is above the wallpaper (the root window of X11).
+SDL_Window *PlatformCreateDockWindow(int width, int height) {
+    SDL_Window *window = SDL_CreateWindow("live-paper-dock", 0, -height, width, height,
+                                          SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN);
+    if (!window) {
+        LOG_WARN("the window of the dock bar could not be created: %s", SDL_GetError());
+        return NULL;
+    }
+    return window;
+}
+
+void PlatformDestroyDockWindow(SDL_Window *window) {
+    if (window) SDL_DestroyWindow(window);
+}
+
+void PlatformSetDockPosition(SDL_Window *window, int x, int y) {
+    if (!window) return;
+    SDL_SetWindowPosition(window, x, y);
+}
+
+void PlatformGetCursorPos(int *x, int *y) {
+    // The position of the mouse is asked from SDL: it works with the window
+    // manager of the screen.
+    int state = SDL_GetGlobalMouseState(x, y);
+    (void)state;
+}
+
+void PlatformGetScreenSize(int *width, int *height) {
+    SDL_DisplayMode mode;
+    if (SDL_GetCurrentDisplayMode(0, &mode) == 0) {
+        *width = mode.w;
+        *height = mode.h;
+        return;
+    }
+    *width = 1920;
+    *height = 1080;
+}
+
+bool PlatformGetDockConfigPath(char *buf, size_t buf_size) {
+    const char *home = getenv("HOME");
+    if (!home || !*home) return false;
+    // The folder of the settings is created, if it does not exist yet.
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s/.config/live-paper", home);
+    mkdir(dir, 0755);
+    snprintf(buf, buf_size, "%s/dock.txt", dir);
+    return true;
 }
 
 void PlatformInit(struct Context *context) {

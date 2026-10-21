@@ -12,8 +12,18 @@
 #include "platform.h"
 #include "sysinfo.h"
 #include "video.h"
+#include "dock.h"
+#include "dock_metrics.h"
 
 Uint32 g_open_file_event = 0;
+
+// The options of the bar of the dock, that come from the command line.
+static struct DockOptions g_dock_options = {
+    .enabled = true,
+    .height = 36,
+    .trigger = 2,
+    .timeout = 3,
+};
 
 // Set when the user asked for the periodic statistics output.
 static bool g_print_stats = false;
@@ -184,6 +194,10 @@ void ProcessArguments(int argc, char *argv[], struct Context *context) {
     struct arg_str *screenshot;
     struct arg_str *desktop_icons;
     struct arg_str *prepare_desktop;
+    struct arg_lit *no_dock;
+    struct arg_str *dock_height;
+    struct arg_str *dock_trigger;
+    struct arg_str *dock_timeout;
     struct arg_file *file;
     struct arg_end *end;
     void *argtable[] = {
@@ -192,12 +206,16 @@ void ProcessArguments(int argc, char *argv[], struct Context *context) {
         stats = arg_lit0(NULL, "stats", "= print runtime statistics every few seconds"),
         dump_windows = arg_lit0(NULL, "dump-windows", "= print the structure of the desktop windows and exit"),
         readback = arg_lit0(NULL, "readback", "= read back the rendered pixels (diagnostics only)"),
+        no_dock = arg_lit0(NULL, "no-dock", "= do not show the bar of the dock"),
         log_file = arg_str0(NULL, "log-file", "<path>", "= write diagnostics to the given file"),
         renderer = arg_str0(NULL, "renderer", "<mode>", "= the renderer to use: auto, accelerated or software"),
         wallpaper_strategy = arg_str0(NULL, "wallpaper-strategy", "<n>", "= how the wallpaper is attached to the desktop (0-6)"),
         desktop_icons = arg_str0(NULL, "desktop-icons", "<mode>", "= the layer of the desktop icons: none, redraw, refresh"),
         prepare_desktop = arg_str0(NULL, "prepare-desktop", "<0|1>", "= send the message 0x052c to Progman (Windows only)"),
         screenshot = arg_str0(NULL, "screenshot", "<path>", "= capture the screen into a BMP file (diagnostics only)"),
+        dock_height = arg_str0(NULL, "dock-height", "<n>", "= the height of the bar of the dock in pixels"),
+        dock_trigger = arg_str0(NULL, "dock-trigger", "<n>", "= how many pixels at the top of the screen show the bar"),
+        dock_timeout = arg_str0(NULL, "dock-timeout", "<n>", "= after how many seconds the bar of the dock hides itself"),
         fit = arg_str0(NULL, "fit-mode", "<mode>", ""),
         arg_rem(NULL, "= controls the way the wallpaper is fit on screen"),
         arg_rem(NULL, "  possible values: fit, fill, center"),
@@ -310,6 +328,32 @@ void ProcessArguments(int argc, char *argv[], struct Context *context) {
     if (context->wallpaper_strategy < 0) context->wallpaper_strategy = 6;
 #endif
 
+    // The options of the bar of the dock. The bar is on by default: it can
+    // be switched off with the --no-dock option or with the item of the
+    // tray menu.
+    g_dock_options.enabled = no_dock->count == 0;
+    g_dock_options.height = 36;
+    g_dock_options.trigger = 2;
+    g_dock_options.timeout = 3;
+    if (dock_height->count) {
+        long value = strtol(dock_height->sval[0], NULL, 10);
+        if (value < 16 || value > 200)
+            FAIL_WITH("the height of the bar of the dock must be from 16 to 200 pixels");
+        g_dock_options.height = (int)value;
+    }
+    if (dock_trigger->count) {
+        long value = strtol(dock_trigger->sval[0], NULL, 10);
+        if (value < 0 || value > 100)
+            FAIL_WITH("the trigger of the bar of the dock must be from 0 to 100 pixels");
+        g_dock_options.trigger = (int)value;
+    }
+    if (dock_timeout->count) {
+        long value = strtol(dock_timeout->sval[0], NULL, 10);
+        if (value < 1 || value > 300)
+            FAIL_WITH("the timeout of the bar of the dock must be from 1 to 300 seconds");
+        g_dock_options.timeout = (int)value;
+    }
+
     LOG_INFO("live-paper starting, file='%s'", context->file);
     if (verbose->count > 0) LOG_INFO("verbose diagnostics enabled");
     if (g_print_stats) LOG_INFO("periodic statistics enabled");
@@ -376,13 +420,18 @@ int main(int argc, char *argv[]) {
     InitContext(&context);
     struct Video* video = VideoLoad(&context);
     LogDiagnostics(&context, video);
-    
+
+    // The bar of the dock. It is a separate window, so that it is above the
+    // wallpaper.
+    struct Dock dock;
+    DockInit(&context, &dock, &g_dock_options);
+
     double ticks_frequency = (double)SDL_GetPerformanceFrequency();
     uint64_t ticks_now = SDL_GetPerformanceCounter();
     uint64_t ticks_last = 0;
     uint64_t stats_next_ms = SDL_GetTicks64() + 5000;
-    uint64_t icons_next_ms = SDL_GetTicks64() + 1000;
     uint64_t screenshot_next_ms = SDL_GetTicks64() + 3000;
+    uint64_t metrics_next_ms = SDL_GetTicks64() + 1000;
     int frames = 0;
     bool quit = false;
     while (!quit) {
@@ -390,6 +439,14 @@ int main(int argc, char *argv[]) {
         ticks_now = SDL_GetPerformanceCounter();
         double delta_sec = (ticks_now - ticks_last)/ticks_frequency;
 
+        // The system details of the bar are sampled once per second.
+        uint64_t now_ms = SDL_GetTicks64();
+        if (now_ms >= metrics_next_ms) {
+            MetricsSample();
+            metrics_next_ms = now_ms + 1000;
+        }
+
+        DockUpdate(&context, &dock);
         VideoUpdate(delta_sec, video, &context);
         PlatformUpdate(&context);
 
@@ -398,10 +455,6 @@ int main(int argc, char *argv[]) {
         // transparent again a few times during the first seconds.
         if (++frames > 10) {
             uint64_t now_ms = SDL_GetTicks64();
-            if (now_ms >= icons_next_ms) {
-                PlatformRefreshDesktopIcons();
-                icons_next_ms = now_ms + 2000;
-            }
             // The screen is captured once, when the wallpaper is running: it
             // shows what the user really sees.
             if (context.screenshot && now_ms >= screenshot_next_ms) {
@@ -410,6 +463,9 @@ int main(int argc, char *argv[]) {
                 context.screenshot = NULL;
             }
         }
+
+        // The bar of the dock is drawn above the wallpaper.
+        DockDraw(&context, &dock);
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -423,6 +479,9 @@ int main(int argc, char *argv[]) {
                 context.file = event.user.data1;
                 video = VideoLoad(&context);
                 LogDiagnostics(&context, video);
+            } else {
+                // The mouse events of the bar of the dock.
+                DockHandleEvent(&context, &dock, &event);
             }
         }
 
@@ -440,6 +499,7 @@ int main(int argc, char *argv[]) {
     LOG_INFO("shutting down");
     LogStats(video);
     VideoClear(video, &context);
+    DockCleanup(&context, &dock);
     ClearContext(&context);
     LogShutdown();
     return 0;

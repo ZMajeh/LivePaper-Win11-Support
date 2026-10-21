@@ -2,7 +2,7 @@
 
 Project: **LivePaper** — live wallpaper for Windows and Linux
 Repository: `/home/majeh/program/LivePaper`
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 
 ---
 
@@ -31,7 +31,8 @@ These rules apply to **every** task in this project:
 | Diagnostics subsystem | ✅ done |
 | Memory leak (per decoded frame) | ✅ **fixed** |
 | Windows wallpaper visibility (WorkerW) | ✅ **working** — the strategy 6 is the default |
-| Windows desktop icons (painted over the video) | ❌ **not solved** — see task 23 |
+| Windows desktop icons | 🚫 **switched off on purpose** — the dock bar replaces them, see task 29 |
+| Top dock bar (hover bar) | ✅ **done** — the bar, the add button, the items and the system details; not yet tested on Windows |
 
 ---
 
@@ -61,12 +62,13 @@ These rules apply to **every** task in this project:
 | 20 | The `0x052c` message, the layered window, and the order of the strategies | ✅ done |
 | 21 | The capture of the screen: the only reliable way to see the desktop | ✅ done — the screenshots confirm strategy 6 |
 | 22 | Strategy 6 works — make it the default and deploy the build | ✅ done |
-| 23 | The desktop icons are not painted (the video and the clicks work) | ⏸ paused — the fix did not work, see the next steps |
+| 23 | The desktop icons are not painted (the video and the clicks work) | 🚫 dropped — the icons are switched off on purpose, see task 29 |
 | 24 | The session of 2026-10-20: deploy, analyse the screenshots, plan | ✅ done |
 | 25 | Fork the project and copy the changes into the new repository | ✅ done — pushed as `17fdb35` |
 | 26 | Fix the CI: the release fails with 403, and the MSVC warnings | ✅ done — the release is created |
 | 27 | Publish the program for Linux as well | ✅ done — the release has all three files |
 | 28 | The instructions for the automatic start on Windows 11 (scheduled task) | ✅ done — documented in the README |
+| 29 | The top dock bar (the hover bar, the add button, the system details) | ✅ done — the bar works, the icons are off |
 
 ---
 
@@ -1249,6 +1251,512 @@ of the README — the scheduled task (with the GUI, with PowerShell and with
 
 ---
 
+### Task 29 — The top dock bar (the hover bar) ✅ done
+
+**What the user asked for** (this is the wording of the request):
+
+* A **simple top bar** that is shown over the wallpaper.
+* The bar is **hidden** and only becomes visible when the mouse is **hovered
+  at the top of the screen**; then it **flips/slides down from above the
+  screen** and stays there.
+* On the **top left** of the bar there is an **add button**.
+* The add button has **two options**:
+  1. **launch the file browser** (the file manager of the system),
+  2. **select a file or a folder** and add it to the bar.
+* An **added folder**: clicking it opens a **temporary popup window** with the
+  **list of the files** of that folder; clicking a file in the list launches it.
+* An **added file**: clicking it **launches that file** directly.
+* On the **top right** of the bar the **system details** are shown:
+  **CPU load**, **RAM usage**, **upload/download speed**, **disk load** and the
+  **time**.
+
+**The answers of the user** (2026-10-21), which settled the four open
+questions of the plan:
+
+1. **"Disk load"** means the **activity** of the disk (the share of the time
+   that the disks were busy), not the used space of the drive.
+2. The bar is **on by default**, and the **tray menu** has a checkable item
+   *Dock bar* that switches it off and on again.
+3. The bar is on **every virtual desktop**, at the place where the wallpaper
+   is: it follows the wallpaper when the user switches to another desktop.
+4. The **desktop icons are switched off completely** — the work on the icons
+   (task 23) is dropped.
+
+**What was built** (the plan is above, the code follows it):
+
+| File | What it does |
+| --- | --- |
+| `src/dock.h` / `src/dock.c` | the model: the items, the state machine (hidden / showing / shown / hiding), the hit testing, the popup, the file `dock.txt` |
+| `src/dock_ui.h` / `src/dock_ui.c` | the drawing of the bar, of the menu of the add button and of the popup |
+| `src/dock_font.h` / `src/dock_font.c` | the built-in 5x7 bitmap font (no new dependency) |
+| `src/dock_metrics.h` / `src/dock_metrics.c` | the sampling of the CPU, the RAM, the network, the disks and the clock (once per second) |
+| `src/dirlist.h` / `src/dirlist.c` | the listing of a folder and the paths (the folders come first) |
+| `src/launcher.h` / `src/launcher.c` | `LauncherOpenFile()` / `LauncherOpenFolder()` — the shell of the system |
+| `platform.h` | the new hooks: the window of the bar, its position, its visibility, the click-through, the position of the mouse, the size of the screen, the path of `dock.txt` |
+
+**The decisions that were taken while writing the code:**
+
+* **The file picker is not a dialog of the system** — it is the popup of the
+  bar itself (the same widget as the list of the files of a folder). It works
+  the same way on every system, it needs no new dependency and it looks like
+  the rest of the bar. The rows are: `..`, the content of the folder (the
+  folders first) and `Add this folder`.
+* **The popup is part of the window of the bar**: the window is as tall as the
+  bar and the popup, and it is moved as a whole, so the popup comes down with
+  the bar.
+* **The font is drawn by hand** (5x7, the characters are doubled to 10x14). A
+  scaled-down outline font is not readable at that size — the letters `g` and
+  `y` cannot be told from `9` and `4`.
+* **The cursor is polled** (`PlatformGetCursorPos()`), because the bar has no
+  focus and the wallpaper is click-through: it does not get the mouse events
+  of the desktop.
+* **The bar follows the virtual desktop**: the window is moved with
+  `IVirtualDesktopManager::MoveWindowToDesktop()` when the user switches.
+* **The metrics are sampled once per second**, and the bar is only drawn when
+  it is not completely hidden.
+
+**The verification:**
+
+* The Linux build and the cross-compile for Windows (`makeLinuxToWindow.sh`)
+  are clean — no warnings, no errors.
+* A self check of the modules (`/tmp/dockcheck.c`) covers the width of the
+  text, the listing of a folder, the paths, the values of the system, the
+  creation of the window, the items and the round trip through `dock.txt`:
+  all of them pass.
+* The bar and the font were drawn into a picture (`assets/dock.png`), to see
+  that they look right.
+* **It was not tested on Windows** — there is no Windows machine and no Wine
+  in this container. The behaviour on Windows (the slide, the clicks, the
+  focus, the virtual desktops) has to be checked by the user.
+
+**The bugs that the self check found** (they are fixed):
+
+* The first line of `/proc/stat` starts with the word `cpu`, so the counters
+  were not read and the load of the processor was always unknown.
+* The transmitted bytes are the **ninth** number of a line of `/proc/net/dev`,
+  not the eighth one.
+* The counters of the network of Windows are 32 bits wide and they wrap
+  around: the difference is computed with the 32 bits arithmetic.
+
+**The bugs that the tests on Windows found** (they are fixed):
+
+* **The program crashed on the start.** The sampler of the network walked over
+  the table of the interfaces with the wrong arithmetic (`row += i` inside the
+  loop, so the pointer ran over the end of the table after a few rows). The
+  table of the interfaces is now read through a structure of its own, so that
+  the name of the member with the rows does not matter (it is `Table` in the
+  headers of MSVC and `table` in the ones of MinGW).
+* **The add button of the bar did nothing.** Two causes:
+  1. The bar was placed **below** the window of the desktop, so the layer of
+     the desktop icons (a child of that window) was above it and took the
+     clicks. The bar is now placed **directly above** the window of the
+     desktop, so it gets the clicks.
+  2. The mouse events of SDL carry the window that has the **mouse focus**,
+     and not the window that was clicked (see `SDL_PrivateSendMouseButton()`).
+     The bar never has the focus — it is a `WS_EX_NOACTIVATE` window — so the
+     events were thrown away by the filter on the window. The position of the
+     mouse is now asked for from the system and the events are not filtered by
+     the window any more.
+* The bar hides itself by **moving above the screen** now, instead of with
+  the `WS_EX_TRANSPARENT` style, which does not work for a window of the
+  first level.
+
+**The desktop icons are switched off** (the fourth answer of the user): the
+default of `g_icons_mode` is `ICONS_NONE` and the periodic
+`PlatformRefreshDesktopIcons()` call is removed from the main loop. The
+strategy 6 stays the default on Windows, so the video is shown and the clicks
+reach the desktop.
+
+---
+
+#### 29.1 The constraints of the existing program
+
+Everything has to fit into the architecture that exists today:
+
+| Constraint | Consequence for the bar |
+| --- | --- |
+| The wallpaper window is a **child of `WorkerW`** (strategies 0-5) or a **top-level popup** (strategy 6, the default on Windows) | The bar **cannot be a child of the wallpaper window** — it would be painted *below* the desktop icons and the clicks would not reach it. It has to be a **separate top-level window** of our own process. |
+| The program is a **GUI application** on Windows (no console) | The bar is the only visible UI; the diagnostics stay in the log. |
+| The renderer is the **software renderer** on Windows | The bar must not depend on the accelerated path — the same renderer code has to work with both. |
+| There is **no font library** in the dependencies (no SDL2_ttf) | The text of the bar needs a **built-in bitmap font** (see 29.4) or a new dependency. |
+| The main loop is a **single `while` loop with `SDL_PollEvent`** in `src/main.c` | The bar is updated and drawn from that loop; its events arrive through the same queue. |
+| The program already has a **config file** (`%LOCALAPPDATA%\LivePaper\config.txt` on Windows, `InitConfigPath()` in `src/platform_windows.c`) | The list of the added items is stored in the same place, in a second file `dock.txt`. |
+| The `--desktop-icons` option cannot be given twice (argtable3) | Every new option has to be designed so that it can be given **once** only. |
+
+---
+
+#### 29.2 The module breakdown (the modular approach)
+
+The bar is **not** one big file. It is split into small modules with a clear
+boundary between them, so that the platform code, the drawing and the model
+can be changed independently. The convention of the project is followed: a
+header per module, the `Foo()` prefix for the functions, the platform code in
+`platform_*.c`.
+
+```
+src/
+  dock.h              the public interface of the bar (the only header that
+                      main.c includes)
+  dock.c              the model: the items, the state machine, the layout,
+                      the hit testing, the config file
+  dock_ui.c           the drawing: the bar, the buttons, the items, the
+                      system details, the popup window
+  dock_font.c         the built-in bitmap font (the text drawing)
+  dock_metrics.c      the system details: CPU, RAM, network, disk, the clock
+  launcher.c          "open this file/folder with the program of the system"
+  filepicker.c        the file/folder selection dialog
+  platform.h          + the new hooks of the platform layer (see 29.5)
+  platform_windows.c  + the Windows implementation of the hooks
+  platform_linux.c    + the Linux implementation (a stub at first)
+  platform_macos.c    + the macOS implementation (a stub)
+```
+
+The dependencies are one-directional — nothing points back to `main.c`:
+
+```
+        main.c
+          |
+        dock.h  <---- the only interface
+          |
+   +------+------+----------------+
+   |      |      |                |
+ dock.c  dock_ui.c  dock_metrics.c  launcher.c / filepicker.c
+   |        |          |
+   |     dock_font.c    |
+   +--------+-----------+
+            |
+      platform.h  (the window, the cursor, the shell integration)
+```
+
+**The responsibilities of every module:**
+
+| Module | Responsibility | Does **not** do |
+| --- | --- | --- |
+| `dock.c` | the list of the items (file/folder), the state machine (hidden / sliding in / shown / sliding out), the geometry of the bar, the hit testing, the load/save of the config file | no drawing, no platform calls |
+| `dock_ui.c` | everything that is drawn: the background of the bar, the add button, the items, the popup with the file list, the system details | no state changes — it only *reports* what was clicked |
+| `dock_font.c` | the bitmap font and the text drawing (the width of a string, the drawing of a string) | nothing else — it knows nothing about the bar |
+| `dock_metrics.c` | the sampling of the system values (once per second), the formatting of the strings (`"12 %"`, `"1.2 MB/s"`, `"12:34"`) | no drawing |
+| `launcher.c` | `LauncherOpenFile(path)` and `LauncherOpenFolder(path)` — the shell of the system | no UI |
+| `filepicker.c` | the dialog that asks the user for a file **or** a folder, with the option "add a file" / "add a folder" | no drawing of the bar |
+| `platform_*.c` | the window of the bar, the position of the mouse, the z-order, the "click through" | no model, no drawing |
+
+---
+
+#### 29.3 The model (`dock.h`)
+
+```c
+// What an item of the bar is.
+enum DockItemKind {
+    DOCK_ITEM_FILE = 0,    // a file: clicking it launches the file
+    DOCK_ITEM_FOLDER,      // a folder: clicking it opens the list of the files
+};
+
+// One entry of the bar.
+struct DockItem {
+    enum DockItemKind kind;
+    char *path;            // the full path (UTF-8 on Windows)
+    char *label;           // the name that is drawn (the file name)
+};
+
+// The state of the bar.
+enum DockState {
+    DOCK_STATE_HIDDEN = 0, // parked above the screen, invisible
+    DOCK_STATE_SHOWING,    // sliding down
+    DOCK_STATE_SHOWN,      // fully down, the mouse is over the bar
+    DOCK_STATE_HIDING,     // sliding up
+};
+
+// The whole state of the bar.
+struct Dock {
+    enum DockState state;
+    SDL_Window *window;        // the top-level window of the bar
+    SDL_Renderer *renderer;    // its renderer
+    int width, height;         // the size of the bar in pixels
+    int screen_width, screen_height;
+
+    struct DockItem *items;    // the added items
+    int item_count;
+    int item_capacity;
+
+    bool add_menu_open;        // the menu of the add button is open
+    int add_menu_hover;        // -1: none, 0: the file browser, 1: the file/folder
+
+    bool popup_open;           // the temporary window with the file list
+    char *popup_folder;        // the folder that is shown
+    char **popup_entries;      // the names of the files
+    int popup_entry_count;
+    int popup_hover;
+    int popup_scroll;
+
+    uint64_t anim_start_ms;    // the beginning of the slide
+    uint64_t last_input_ms;    // the last click (the popup closes after a while)
+    bool enabled;              // false: the bar is not created at all
+};
+```
+
+**The public interface** (the only thing that `main.c` uses):
+
+```c
+void DockInit(struct Context *ctx, struct Dock *dock);
+void DockUpdate(struct Context *ctx, struct Dock *dock);   // the state machine
+void DockDraw(struct Context *ctx, struct Dock *dock);     // the drawing
+void DockHandleEvent(struct Context *ctx, struct Dock *dock, const SDL_Event *e);
+void DockCleanup(struct Context *ctx, struct Dock *dock);
+```
+
+`DockUpdate()` is called **once per frame** from the main loop, next to
+`PlatformUpdate()`. It does four things, in this order:
+
+1. **the mouse position** is read (`PlatformGetCursorPos()`) — the bar cannot
+   use the SDL mouse events, because it does not have the focus;
+2. the **state machine** is advanced (the slide is animated, the bar is hidden
+   again when the mouse leaves it);
+3. the **system details** are refreshed (once per second, not once per frame);
+4. the window is **moved** to the position that the state requires.
+
+---
+
+#### 29.4 The drawing and the font
+
+**The font.** The program has no font library. Two ways out:
+
+* **A built-in bitmap font** (`dock_font.c`) — a 5x7 pixel font for the
+  printable ASCII, stored as 5 bytes per character (95 characters = 475
+  bytes). It is drawn with `SDL_RenderFillRect()` per pixel, so it works with
+  the software renderer and needs no new dependency. **This is the plan.**
+* SDL2_ttf — a real font, but a new dependency for the MSVC build (a download
+  in `CMakeLists.txt`), for the MinGW build and for the Linux package.
+
+The bitmap font is enough for the system details (`"CPU 12%"`, `"1.2 MB/s"`,
+`"12:34"`) and for the file names (the long names are cut with `...`).
+
+**The layout of the bar** (the height is 36 px by default):
+
+```
++----------------+--------------------------------------------+------------------+
+| [ + ]  |  item  |  item  |  item ...     |  CPU 12%  RAM 3.1/16G  ^1.2M v340K  D 7%  12:34 |
++----------------+--------------------------------------------+------------------+
+   left                                                            right
+```
+
+* **left**: the **add button** — a square with a `+` in it.
+* **middle**: the **items** — the icon of the kind (file / folder) and the
+  label; the items that do not fit are cut with `...`.
+* **right**: the **system details**, each in its own group, separated by a
+  thin line.
+
+**The colours**: a dark, semi-transparent bar (`#202020` at 90 %), the text in
+`#E0E0E0`, the items in the accent colour when the mouse is over them, the
+add button in the accent colour when its menu is open.
+
+**The add menu** (the two options of the add button) — a small panel under the
+button:
+
+```
++------------------+
+|  File browser    |
+|  Add file/folder |
++------------------+
+```
+
+**The popup window of a folder** — a separate small window under the bar,
+with the list of the files of the folder (the folders first, then the files,
+both sorted). Clicking a file launches it, clicking a folder opens it in the
+same popup. The popup closes when the mouse clicks outside of it, or after
+30 seconds without a click.
+
+---
+
+#### 29.5 The platform hooks (`platform.h`)
+
+The bar needs seven things from the system. They are added to `platform.h`,
+so that `dock.c` never talks to Windows directly.
+
+```c
+// The window of the bar: a top-level window that is not activated when it is
+// clicked (the desktop keeps the focus) and that can be made transparent for
+// the mouse (the clicks pass through it to the desktop).
+bool PlatformCreateDockWindow(struct Context *ctx, SDL_Window **out,
+                              int width, int height);
+void PlatformDestroyDockWindow(SDL_Window *window);
+void PlatformSetDockPosition(SDL_Window *window, int x, int y);
+void PlatformSetDockClickThrough(SDL_Window *window, bool click_through);
+
+// The position of the mouse on the whole screen, in the coordinates of the
+// desktop. This is the only way to know that the mouse is at the top of the
+// screen: the bar does not have the focus, so it gets no mouse events.
+void PlatformGetCursorPos(int *x, int *y);
+
+// The size of the screen of the desktop.
+void PlatformGetScreenSize(int *width, int *height);
+```
+
+**The Windows implementation** (the part that needs the most care):
+
+* The window is created by SDL (`SDL_CreateWindow` with
+  `SDL_WINDOW_BORDERLESS`), and the `HWND` is taken out with
+  `SDL_GetWindowWMInfo()`.
+* The styles that are added to it: `WS_EX_TOOLWINDOW` (it does not appear in
+  the task bar), `WS_EX_NOACTIVATE` (the click does not take the focus away
+  from the desktop, so the desktop icons keep working) and `WS_EX_LAYERED`
+  (the alpha of the slide).
+* **The click-through**: `WS_EX_TRANSPARENT` is added when the bar is hidden
+  and removed when it is shown, so that the clicks on the top of the screen
+  reach the desktop while the bar is away.
+* **The z-order**: the bar is placed **directly above the wallpaper window**
+  with `SetWindowPos(dock_hwnd, wallpaper_hwnd, ...)`. That way the bar is
+  above the wallpaper but **below the other applications** — it does not
+  float over everything. If the wallpaper is a child of `WorkerW` (not a
+  top-level window), `HWND_TOPMOST` is used instead.
+* The position is set with `SetWindowPos()` — the slide is done by moving the
+  window from `y = -height` to `y = 0`.
+
+**The Linux implementation** (the second version, after Windows works):
+
+* The window is an SDL window with `SDL_WINDOW_BORDERLESS`; the position is
+  set with `SDL_SetWindowPosition()`.
+* The "always on top" is asked for with the `_NET_WM_STATE_ABOVE` hint of
+  X11; the click-through is not possible with a plain SDL window, so the
+  Linux version **keeps the bar on the screen** and only moves it away
+  (out of the screen, `y = -height`).
+* The mouse position comes from `XQueryPointer()`.
+
+**The macOS implementation** is a stub at first (the macOS support of the
+program is a stub as well).
+
+---
+
+#### 29.6 The system details (`dock_metrics.c`)
+
+Every value is sampled **once per second** — not once per frame, so that the
+CPU load of the program itself stays low.
+
+| Value | Windows | Linux | What is drawn |
+| --- | --- | --- | --- |
+| **CPU load** | `GetSystemTimes()` — the difference of the idle time to the total time | `/proc/stat` — the same idea | `CPU 12%` |
+| **RAM usage** | `GlobalMemoryStatusEx()` — the used memory of the whole system (not the memory of the process!) | `/proc/meminfo` — `MemTotal` - `MemAvailable` | `RAM 3.1/16 G` |
+| **Upload / download** | `GetIfTable2()` — the sum of the bytes of the interfaces, compared with the value of the second before | `/proc/net/dev` — the same | `^1.2 M  v 340 K` (bytes per second) |
+| **Disk load** | `GetDiskPerformanceCounter()` of the physical disks — the time that the disk was busy, compared with the time | `/proc/diskstats` — the same | `D 7%` |
+| **Time** | `GetLocalTime()` | `localtime()` | `12:34` |
+
+**A decision that has to be confirmed by the user:** "disk load" can mean two
+different things — the **activity** of the disk (how busy it is) or the **used
+space** of the system drive. The plan uses the **activity** (it is the same
+kind of value as the CPU load); if the used space is meant, the implementation
+is one call (`GetDiskFreeSpaceEx()` / `statvfs()`) instead.
+
+**The memory of the program is not shown** — the bar shows the memory of the
+*system*, not of LivePaper. The memory of the process stays in the log
+(`LogStats()`).
+
+---
+
+#### 29.7 The new files and the new options
+
+**The files that are added:**
+
+| File | Lines (rough) | Content |
+| --- | --- | --- |
+| `src/dock.h` | 120 | the public interface, the structures |
+| `src/dock.c` | 450 | the model, the state machine, the config file |
+| `src/dock_ui.c` | 500 | the drawing of the bar, the menu, the popup |
+| `src/dock_font.c` | 200 | the bitmap font, the text drawing |
+| `src/dock_metrics.c` | 350 | the sampling of the system values |
+| `src/launcher.c` | 80 | `LauncherOpenFile()` / `LauncherOpenFolder()` |
+| `src/filepicker.c` | 200 | the file/folder dialog |
+
+**The new options of the command line** (all of them can be given **once**,
+because of the argtable3 limitation):
+
+| Option | Meaning |
+| --- | --- |
+| `--no-dock` | the bar is not created at all (the default is that it is) |
+| `--dock-height=<n>` | the height of the bar in pixels (the default is 36) |
+| `--dock-trigger=<n>` | how many pixels at the top of the screen trigger the bar (the default is 2) |
+| `--dock-timeout=<n>` | after how many seconds the bar hides itself without a mouse (the default is 3) |
+
+**The config file**: the items are stored in `dock.txt` next to `config.txt`
+(`%LOCALAPPDATA%\\LivePaper\\dock.txt` on Windows), one path per line, the
+folders with a trailing `/`. The file is read when the program starts and
+written when an item is added or removed.
+
+**The CMakeLists.txt** has to be changed: the new files are added to both
+targets (`live-paper` and `live-paper-console`), and `shell32`/`ole32` are
+added for the file dialog and the shell calls on Windows.
+
+---
+
+#### 29.8 The phases of the work
+
+Each phase is a step that can be built and tested on its own.
+
+| Phase | What | Done when |
+| --- | --- | --- |
+| **P1** | the **window** of the bar: it slides down when the mouse is at the top of the screen and hides itself again | the bar moves, the clicks pass through it to the desktop |
+| **P2** | the **drawing**: the background, the font, the add button (the icon only, no function yet) | the bar looks like a bar |
+| **P3** | the **add button** and its **two options**: the file browser (`explorer.exe` / `xdg-open`) and the file/folder dialog | the file manager opens; a file can be chosen |
+| **P4** | the **items**: the list, the config file, the click on a file launches it, the click on a folder opens the popup with the file list | the whole "add and use" flow works |
+| **P5** | the **system details** on the right | the values are shown and they are correct |
+| **P6** | the **polish**: the animation, the alpha, the multi-monitor, the README, the release | the program is released with the bar |
+
+**The order of the work in `main.c`** (the only place that changes in the
+existing code):
+
+```c
+InitContext(&context);            // the wallpaper, as today
+DockInit(&context, &dock);        // the bar
+...
+while (!quit) {
+    ...
+    DockUpdate(&context, &dock);  // the state machine + the system details
+    VideoUpdate(delta_sec, video, &context);
+    PlatformUpdate(&context);
+    ...
+    DockDraw(&context, &dock);    // the drawing of the bar
+    ...
+    while (SDL_PollEvent(&event)) {
+        DockHandleEvent(&context, &dock, &event);   // the clicks on the bar
+        ...
+    }
+}
+```
+
+---
+
+#### 29.9 The risks and the open questions
+
+| Risk | How it is handled |
+| --- | --- |
+| The bar **steals the focus** from the desktop and the icons stop working | `WS_EX_NOACTIVATE` on Windows; the window is never activated |
+| The bar **covers the wallpaper** and the clicks do not reach the desktop | `WS_EX_TRANSPARENT` while it is hidden; the bar is only 36 px high |
+| The bar is **above the other applications** | it is placed directly above the wallpaper window, not `TOPMOST` |
+| The bar **costs CPU** (the program is a wallpaper, it has to be quiet) | the system values are sampled once per second; the bar is only drawn when it is not fully hidden; the animation is 200 ms |
+| The bar **does not appear** on Windows, because the wallpaper is a child of `WorkerW` | the bar is a **top-level** window, not a child — it is not affected by the strategy of the wallpaper |
+| The **font** is ugly or unreadable | the bitmap font is 5x7, drawn with the pixels doubled (so 10x14) — readable |
+| The **popup with the file list** gets in the way | it closes on a click outside of it and after 30 seconds |
+| The **file names** are long | they are cut with `...`; the full name goes into the log |
+
+**The questions for the user** (they do not block the start of P1):
+
+1. **"Disk load"** — the activity of the disk or the used space of the drive?
+2. Should the bar be **on by default** on Windows, or only with `--dock`?
+3. Should the bar be on **every monitor** or only on the main one? (the plan:
+   only on the main one, in the first version)
+4. Should the added items be **remembered between the runs**? (the plan: yes,
+   in `dock.txt`)
+
+---
+
+#### 29.10 What is *not* in the plan (the first version)
+
+* No clock widget, no calendar, no media keys.
+* No drag and drop of the files onto the bar.
+* No search field.
+* No editing of the items from the bar — the file is edited by hand.
+* No more than one bar (the multi-monitor is not in the first version).
+
+---
+
 ## Next steps
 
 > **Remember:** per the *Working rules* at the top — log the task here first,
@@ -1256,7 +1764,44 @@ of the README — the scheduled task (with the GUI, with PowerShell and with
 
 ### The plan for the next session
 
-**The goal:** show the video **and** the desktop icons at the same time.
+#### The new top dock bar — the task 29 ✅ done
+
+**The goal:** a small bar at the top of the screen, over the wallpaper, that
+**slides down when the mouse reaches the top of the screen** and hides itself
+again. It has an **add button** (top left) with two options — **open the file
+browser** and **select a file or a folder** — and the **system details** (top
+right): **CPU load, RAM usage, upload/download speed, disk load, time**.
+
+**The bar is implemented** (the details are in task 29, above). The desktop
+icons are switched off, as the user decided.
+
+**What is left to do:**
+
+1. **Test the bar on Windows** — the slide, the clicks on the buttons, the
+   focus of the desktop, the virtual desktops. There is no Windows machine and
+   no Wine in this container, so it could not be tested here.
+2. Deploy the build to the Windows machine (`./makeLinuxToWindow.sh` does it)
+   and look at the bar.
+3. The bar is only on the **main screen** for now. The other screens are not
+   in the first version.
+
+#### The old goal — the video **and** the desktop icons at the same time
+
+**This goal is dropped.** The user decided (2026-10-21) that the desktop icons
+are **switched off completely** and that the work continues on the dock bar. The
+icons are in the way: the layer of the icons is the one that keeps the snapshot
+of the desktop, and the snapshot hides the wallpaper.
+
+**What that means for the code:**
+
+* The default of `g_icons_mode` in `platform_windows.c` is `ICONS_NONE`
+  (before: `ICONS_REFRESH`). The layer of the icons is not touched at all, so
+  the shell does not paint the icons and does not keep the snapshot.
+* The periodic `PlatformRefreshDesktopIcons()` call in the main loop is
+  **removed** — it only existed to make the icons visible.
+* The strategy 6 stays the default on Windows: the window is a popup that the
+  mouse clicks pass through, so the video is shown and the clicks reach the
+  desktop.
 
 **The reasoning (the details are in task 23):** the strategy 6 is a top-level
 popup, so the icons — which live in the `SHELLDLL_DefView`/`SysListView32`
@@ -1273,23 +1818,27 @@ WorkerW            <- the background, at the bottom
 
 **The steps, in order:**
 
-1. **Test the strategy 1** (`--wallpaper-strategy=1`, a child of the `WorkerW`)
+1. ~~**Test the strategy 1** (`--wallpaper-strategy=1`, a child of the `WorkerW`)
    and the **strategy 5** (`--wallpaper-strategy=5`, a layered child of the
    `WorkerW`). They were rejected by the unreliable colour check back when
    the renderer still produced nothing — they have never been tested with the
-   working renderer and the software renderer.
-2. Look at the `the children of the parent (z-order, topmost first):` part of
+   working renderer and the software renderer.~~ **Not needed any more: the
+   icons are switched off.**
+2. ~~Look at the `the children of the parent (z-order, topmost first):` part of
    the log: the `SDL_app` window has to be **between** `SysListView32` and
-   `WorkerW`.
-3. If the video is visible but the icons are not, the layer of the icons has
+   `WorkerW`.~~ **Not needed any more.**
+3. ~~If the video is visible but the icons are not, the layer of the icons has
    to be refreshed **after** the window was attached — the order of the
-   operations in `PlatformAttachWallpaper()` has to be checked.
-4. If the icons still do not come, try the variant of the AutoIt thread:
+   operations in `PlatformAttachWallpaper()` has to be checked.~~ **Not needed
+   any more.**
+4. ~~Try the variant of the AutoIt thread:
    `SetWindowLong(GWL_HWNDPARENT, SysListView32)` + `WS_EX_LAYERED` +
-   `SetLayeredWindowAttributes`.
-5. **Ask the user which is more important** — the icons or the video. The
+   `SetLayeredWindowAttributes`.~~ **Not needed any more.**
+5. ~~**Ask the user which is more important** — the icons or the video. The
    strategy 6 (the video and the clicks) works today; if the icons cannot be
-   saved, the strategy 6 stays the default.
+   saved, the strategy 6 stays the default.~~ **Answered: the video and the
+   dock bar are more important. The strategy 6 stays the default and the icons
+   are switched off.**
 
 **The other things that are waiting:**
 

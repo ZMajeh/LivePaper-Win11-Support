@@ -24,6 +24,32 @@ Simply run live-paper.exe. On its first run, LivePaper will open a window to cho
 
 Note that if LivePaper quits due to an error, the remembered wallpaper file will be cleared. The next time the app is started, you will need to choose the wallpaper file again.
 
+### The bar of the dock
+
+LivePaper shows a small bar at the top of the screen. It slides down when the mouse
+reaches the top of the screen and it goes away again when the mouse leaves it.
+
+![The bar of the dock](assets/dock.png)
+
+The bar has a button with a cross on the left, the files and the folders that were
+added to it in the middle, and the state of the system on the right: the load of
+the processor, the used memory, the speed of the network, the load of the disks
+and the time.
+
+* The **cross** opens a menu with two options: *File browser* opens the file
+  manager of Windows, and *Add file or folder* opens a list of the files, in
+  which a file or a folder can be chosen. The chosen file is added to the bar:
+  clicking it opens it with the program that belongs to it. A folder that is
+  added shows the files inside it when it is clicked, and clicking a file in the
+  list opens it.
+* The **items** of the bar are remembered between the runs, in the file
+  `dock.txt` next to the other settings of the program.
+* The **details** on the right are sampled once per second, so that the program
+  stays quiet.
+
+The bar can be switched off and on again with the item *Dock bar* of the tray
+menu, or with the option `--no-dock` when the program is started.
+
 #### Start LivePaper automatically on Windows 11
 
 There are three ways to do it. The scheduled task is the most controllable one, because it lets you

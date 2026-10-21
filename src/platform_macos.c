@@ -58,6 +58,49 @@ void PlatformSetPrepareDesktop(bool enable) {
 void PlatformRefreshDesktopIcons(void) {
 }
 
+// The window of the bar of the dock.
+SDL_Window *PlatformCreateDockWindow(int width, int height) {
+    SDL_Window *window = SDL_CreateWindow("live-paper-dock", 0, -height, width, height,
+                                          SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN);
+    if (!window) {
+        LOG_WARN("the window of the dock bar could not be created: %s", SDL_GetError());
+        return NULL;
+    }
+    return window;
+}
+
+void PlatformDestroyDockWindow(SDL_Window *window) {
+    if (window) SDL_DestroyWindow(window);
+}
+
+void PlatformSetDockPosition(SDL_Window *window, int x, int y) {
+    if (!window) return;
+    SDL_SetWindowPosition(window, x, y);
+}
+
+void PlatformGetCursorPos(int *x, int *y) {
+    int state = SDL_GetGlobalMouseState(x, y);
+    (void)state;
+}
+
+void PlatformGetScreenSize(int *width, int *height) {
+    SDL_DisplayMode mode;
+    if (SDL_GetCurrentDisplayMode(0, &mode) == 0) {
+        *width = mode.w;
+        *height = mode.h;
+        return;
+    }
+    *width = 1920;
+    *height = 1080;
+}
+
+bool PlatformGetDockConfigPath(char *buf, size_t buf_size) {
+    const char *home = getenv("HOME");
+    if (!home || !*home) return false;
+    snprintf(buf, buf_size, "%s/.config/live-paper/dock.txt", home);
+    return true;
+}
+
 void PlatformInit(struct Context *context)
 {
     context->window = SDL_CreateWindow("LivePaper TEST", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1000, 500, SDL_WINDOW_SHOWN);
