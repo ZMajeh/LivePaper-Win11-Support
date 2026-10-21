@@ -32,7 +32,8 @@ These rules apply to **every** task in this project:
 | Memory leak (per decoded frame) | ✅ **fixed** |
 | Windows wallpaper visibility (WorkerW) | ✅ **working** — the strategy 6 is the default |
 | Windows desktop icons | 🚫 **switched off on purpose** — the dock bar replaces them, see task 29 |
-| Top dock bar (hover bar) | ✅ **done** — the bar, the add button, the items and the system details; the popup below the bar has a window of its own |
+| Top dock bar (hover bar) | ⚠️ **the bar works, the add button does not show anything on Windows** — see task 31 |
+| The add button (the file picker) | 🚧 **not working on Windows** — the state machine is right, the custom popup window is not visible |
 
 ---
 
@@ -70,6 +71,7 @@ These rules apply to **every** task in this project:
 | 28 | The instructions for the automatic start on Windows 11 (scheduled task) | ✅ done — documented in the README |
 | 29 | The top dock bar (the hover bar, the add button, the system details) | ✅ done — the bar works, the icons are off |
 | 30 | The add button does nothing: the menu of the add button is not shown | ✅ done — the popup has a window of its own, see task 30 |
+| 31 | The add button still shows nothing on Windows: use a native file dialog | 🔄 in progress — the analysis and the plan are in task 31 |
 
 ---
 
@@ -1808,6 +1810,109 @@ rendering of the bar into a bitmap.
 **What is left to do:** test it on Windows — the menu, the file browser, the
 file picker, the folder popup and the launch of the files.
 
+### 31. The add button still shows nothing on Windows 🔄 in progress
+
+**The report of the user (2026-10-22, 02:11):** the click on the add button is
+registered, but nothing is shown. The user wants the add button to **open a
+file browser** where a file or a folder can be chosen.
+
+**What the log of the user shows (this is the important part):**
+
+```
+[02:11:36] DEBUG: a click at (34,11) in the bar
+[02:11:36] INFO : the add button of the bar was clicked
+[02:11:36] INFO : the menu of the add button was opened
+[02:11:36] DEBUG: the bar of the dock was placed above the desktop   (x hundreds)
+```
+
+**The conclusion:** the **state machine works** — the click is received, the
+add button is found, and the menu of the add button is opened. The problem is
+**only that the window of the popup is not visible on the screen**. The
+hundreds of `the bar of the dock was placed above the desktop` lines are the
+`PlatformPlaceDockPopupWindow()` call of `DockUpdate()`, which runs on **every
+frame** while the popup is open. It is not an error, but it is a lot of noise
+and it is a sign that the popup is being repositioned all the time.
+
+**The three causes that are still possible** (there is no Windows machine and
+no Wine in this container, so they cannot be told apart here):
+
+1. **The z-order of the popup is wrong.** The bar is placed *directly above the
+   desktop* (`PlaceDockAboveDesktop()`), so that the layer of the desktop
+   icons (a child of `Progman`) cannot swallow the clicks. The popup is
+   placed with the same rule, but it is a **separate window**: it is created
+   with `PlatformCreateDockPopupWindow()` and it is placed above the desktop
+   **before** it is shown. Showing a window can change its place in the
+   z-order, and `PlatformPlaceDockPopupWindow()` is called on every frame to
+   fix it — but the `SetWindowPos()` of the popup is done with `SWP_NOMOVE |
+   SWP_NOSIZE`, so the window keeps the size it had when it was created. If the
+   size is wrong, the window is not where it is expected.
+2. **The popup is behind the wallpaper.** The wallpaper is a top level popup
+   window (strategy 6) that covers the whole screen. The bar is *below* the
+   other applications but *above* the desktop. The popup is placed with the
+   same rule, but it is created **later**, so it can end up below the
+   wallpaper of the strategy 6.
+3. **The window is shown but it is empty.** `DockUiDrawPopup()` is a separate
+   function now, and it is called from `DockUiDraw()`. The renderer of the
+   popup is created with `SDL_RENDERER_SOFTWARE`. If the window of the popup
+   is never shown (`PlatformSetDockVisible()` uses `SW_SHOWNA`), the
+   `SDL_RenderPresent()` of the popup does nothing.
+
+**The decision: do not debug the custom popup any more — use the native file
+dialog of Windows.**
+
+The user asked for a **file browser**. Windows has one that is perfect for
+this: `IFileOpenDialog` (the dialog of the shell, the same one that is used by
+"Open file" in every program). It can select **a file or a folder** with the
+option `FOS_PICKFOLDERS`, and it is a normal window, so it is always visible
+and always above everything. It also saves a lot of work: the custom popup,
+the own file picker and the own folder list are not needed any more.
+
+**The plan (in this order):**
+
+1. **Add `LauncherPickFile()` to `src/launcher.c` / `src/launcher.h`.** It
+   opens the native dialog of the shell and returns the path that was chosen
+   (or `NULL` if the user cancelled it).
+   * Windows: `CoCreateInstance(CLSID_FileOpenDialog)` with the options
+     `FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST`. The
+     libraries `ole32` and `shell32` are already linked (see `CMakeLists.txt`),
+     and `ole32` is enough for `IFileOpenDialog`. The result is taken with
+     `IShellItem::GetDisplayName(SIGDN_FILESYSPATH)`.
+   * Linux and macOS: the function returns `NULL` and logs that the native
+     dialog is not available — the custom popup stays for these systems.
+2. **The add button opens the dialog.** The click on the add button sets a
+   flag; the main loop opens the dialog and calls `DockAddItem()` with the
+   path that was chosen. The **kind** of the item (file or folder) is decided
+   with the helpers of `src/dirlist.c` (there is probably already a function
+   that tells a folder from a file).
+3. **Keep the custom popup for the folders of the bar** (the list of the files
+   of a folder that is an item of the bar). It is a nice feature, but it is
+   not what the user is waiting for. It can be fixed later.
+4. **The log spam.** `PlatformPlaceDockPopupWindow()` is called on every
+   frame; it should only be called when the popup is shown. The `LOG_DEBUG()`
+   of `PlaceDockWindowAboveDesktop()` should also be quieter.
+
+**The open questions (for the next session):**
+
+* Should the add button open the dialog **directly**, or should the menu with
+  the two options ("File browser" and "Add file or folder") stay? The user
+  wrote "clicking on add should launch file browser window", so the **dialog
+  directly** is the right reading. The menu can stay for the other actions.
+* The native dialog of the shell is **modal**: it blocks the program until it
+  is closed. The program must not look frozen: the video has to keep playing
+  while the dialog is open. The cleanest way is to run the dialog on its own
+  thread and to send the result back with an SDL event (there is already a
+  `g_open_file_event` in `src/main.c` for the tray menu — the same mechanism
+  can be reused).
+* The `IFileOpenDialog` interface needs `ole32` and the headers of the
+  Windows SDK (`shobjidl.h`). The cross-build with MinGW has to be checked
+  with a real `CoCreateInstance` call — it may need the GUID of
+  `IID_IFileOpenDialog`, which is in `libuuid.a` (the file `libuuid.a` was
+  **not** found in the container — it may have to be added to the link line of
+  `CMakeLists.txt`).
+
+**The files:** `src/dock.c`, `src/dock.h`, `src/launcher.c`, `src/launcher.h`,
+`src/main.c`, `src/platform_windows.c`, `CMakeLists.txt`.
+
 ---
 
 ## Next steps
@@ -1829,15 +1934,23 @@ right): **CPU load, RAM usage, upload/download speed, disk load, time**.
 icons are switched off, as the user decided. The **popup below the bar has a
 window of its own** (task 30), so the menu of the add button is really shown.
 
-**What is left to do:**
+**What is left to do (the order matters):**
 
-1. **Test the popup on Windows** — the menu of the add button, the file
-   browser, the file picker, the folder popup and the launch of the files.
-   There is no Windows machine and no Wine in this container, so it could not
-   be tested here. The build that was deployed on 2026-10-21 has the fix.
-2. The bar is only on the **main screen** for now. The other screens are not
+1. **The add button must open a native file dialog** (task 31). This is the
+   thing the user is waiting for: click **+** → a file browser opens → choose a
+   file or a folder → it is added to the bar. Use `IFileOpenDialog` with
+   `FOS_PICKFOLDERS` — it is the dialog of the shell, it is always visible,
+   and it does both (files and folders). **Do not fight the custom popup
+   window any more.**
+2. **The custom popup of the bar** (the list of the files of a folder that is
+   an item of the bar) is still invisible on Windows. The three possible
+   causes are in task 31. It is not urgent: the folder of the bar can also be
+   opened with the file manager of the system.
+3. **The log spam:** `PlatformPlaceDockPopupWindow()` runs on every frame
+   while the popup is open, and it fills the log with hundreds of lines.
+4. The bar is only on the **main screen** for now. The other screens are not
    in the first version.
-3. Move the headless check (`/tmp/dockcheck.c`) into `tests/` and connect it
+5. Move the headless check (`/tmp/dockcheck.c`) into `tests/` and connect it
    to CTest.
 
 #### The old goal — the video **and** the desktop icons at the same time
@@ -1954,4 +2067,65 @@ SDL_VIDEODRIVER=dummy /tmp/leaktest assets/test.gif 8
   Windows can show an old frame) — the log can report that the wallpaper is
   visible when it is not, and the other way round. The screenshot
   (`--screenshot`) is the only reliable evidence.
+
+---
+
+## The prompt for the next session
+
+Copy this text and send it to the assistant. It has everything that is needed
+to continue the work.
+
+> **Read `CurrentWork.md` in this repository and continue the work from where
+> it stopped.**
+>
+> The project is **LivePaper** — a live wallpaper for Windows and Linux. The
+> work that is in progress is the **task 31**: the add button of the top dock
+> bar does not show anything on Windows, and it has to open a **native file
+> dialog** (`IFileOpenDialog` with `FOS_PICKFOLDERS`) where a file or a folder
+> can be chosen.
+>
+> **Do this:**
+>
+> 1. Read `CurrentWork.md` completely — the task 31 section has the analysis,
+>    the plan, the open questions and the list of the files.
+> 2. Read the files that are named in the task 31 section
+>    (`src/dock.c`, `src/dock.h`, `src/launcher.c`, `src/launcher.h`,
+>    `src/main.c`, `src/platform_windows.c`, `CMakeLists.txt`).
+> 3. Add `LauncherPickFile()` to `src/launcher.c` and `src/launcher.h`: on
+>    Windows it opens the dialog of the shell (`IFileOpenDialog`, the options
+>    `FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST`) and returns
+>    the chosen path, or `NULL` if the user cancelled it. On Linux and macOS it
+>    returns `NULL` and logs that the native dialog is not available.
+> 4. Make the add button of the dock open the dialog. The dialog is
+>    **modal**, so it must not freeze the program: run it on its own thread
+>    and send the result back with an SDL event (the tray menu of
+>    `src/main.c` already does this with `g_open_file_event` — reuse the same
+>    mechanism). When a path comes back, add it to the bar with
+>    `DockAddItem()` and decide with the helpers of `src/dirlist.c` if it is a
+>    file or a folder.
+> 5. Check that the **Linux build** (`cmake -B build && cmake --build build`)
+>    and the **Windows cross-build** (`./makeLinuxToWindow.sh`) are clean, and
+>    that the headless check still passes
+>    (`gcc -o /tmp/dockcheck /tmp/dockcheck.c src/dock.c src/dock_ui.c
+>    src/dock_font.c src/dock_metrics.c src/dirlist.c src/launcher.c
+>    src/platform_linux.c src/log.c src/fail.c -I src $(pkg-config --cflags
+>    --libs sdl2) -lX11 -lm && /tmp/dockcheck`).
+> 6. **Deploy the Windows build** with `./makeLinuxToWindow.sh` — it copies
+>    the result to `/mnt/c/Users/mundh/OneDrive/Desktop/LivePaper-win64`,
+>    which is the folder of the user.
+> 7. Update `CurrentWork.md`: the entry of the task 31, the *Status* table
+>    and the *Next steps*, and commit the changes.
+>
+> **The important rules of this project** (they are at the top of
+> `CurrentWork.md`): the log of the work is updated **before** the work starts
+> and **when it is finished**; the Linux and the Windows builds must stay
+> without warnings; the changes of the source are only on the Windows machine
+> after `makeLinuxToWindow.sh` has been run.
+>
+> **The last thing the user said (2026-10-22):** *"clicking on add should
+> launch file browser window, but it does nothing"*. The log of the user
+> proves that the click is received and that the menu is opened, so only the
+> **display** of the custom popup is broken. The decision is to use the
+> **native dialog of Windows** instead of fighting with the custom popup
+> window any more.
 
