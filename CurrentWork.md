@@ -32,7 +32,7 @@ These rules apply to **every** task in this project:
 | Memory leak (per decoded frame) | ✅ **fixed** |
 | Windows wallpaper visibility (WorkerW) | ✅ **working** — the strategy 6 is the default |
 | Windows desktop icons | 🚫 **switched off on purpose** — the dock bar replaces them, see task 29 |
-| Top dock bar (hover bar) | ✅ **done** — the bar, the add button, the items and the system details; not yet tested on Windows |
+| Top dock bar (hover bar) | ✅ **done** — the bar, the add button, the items and the system details; the popup below the bar has a window of its own |
 
 ---
 
@@ -69,6 +69,7 @@ These rules apply to **every** task in this project:
 | 27 | Publish the program for Linux as well | ✅ done — the release has all three files |
 | 28 | The instructions for the automatic start on Windows 11 (scheduled task) | ✅ done — documented in the README |
 | 29 | The top dock bar (the hover bar, the add button, the system details) | ✅ done — the bar works, the icons are off |
+| 30 | The add button does nothing: the menu of the add button is not shown | ✅ done — the popup has a window of its own, see task 30 |
 
 ---
 
@@ -1757,6 +1758,58 @@ while (!quit) {
 
 ---
 
+### 30. The add button does nothing ✅ done
+
+**The report of the user (2026-10-21):** the click on the add button is
+registered (`the add button of the bar was clicked` in the log), but nothing
+happens — no menu, no file browser.
+
+**The cause.** The popup (the menu of the add button and the list of the files
+of a folder) was drawn **inside the window of the bar**, below the bar. The
+window of the bar was resized when the popup was opened, so that the popup was
+inside the window. But:
+
+* The window was only resized in `DockSyncWindowSize()`, which was called at
+  the **end** of `DockUpdate()`. The click is handled in `DockHandleEvent()`,
+  which runs **after** the drawing of the frame. So the menu was opened in the
+  frame *n* and the window was resized in the frame *n+1*: on the frame *n* the
+  menu was drawn outside of the window and was cut away.
+* Even after the resize, the menu of the add button was **not drawn at all**:
+  `DrawAddMenu()` was only called for `DOCK_POPUP_ADD_MENU`, but the popup was
+  resized with `DockVisibleRows()` — the number of the rows of the *folder*
+  popup, which is **zero** for the menu of the add button. The window was
+  therefore not tall enough for the menu.
+* The window of the bar is as wide as the screen. A popup that is drawn inside
+  it covers the whole width of the screen with the background of the bar.
+
+**The fix.** The popup has a **window of its own** now:
+
+* `PlatformCreateDockPopupWindow()` creates it (top level, without a border,
+  without a title, `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`, like the bar).
+* It is placed **below the bar**, and it is only as big as the rows that are
+  shown, so it does not cover the rest of the screen.
+* The menu of the add button is not a special case any more: its two options
+  ("File browser" and "Add file or folder") are **rows** of the popup, like
+  the rows of a folder. There is only one kind of row and one kind of popup.
+* The hit test of the rows uses the position of the mouse **on the screen**,
+  because the popup has a window of its own and the coordinates of the window
+  of the bar do not apply to it.
+* The z-order of the popup is fixed after it is shown, because showing a
+  window can change its place: `PlatformPlaceDockPopupWindow()`.
+
+**The files:** `src/dock.c`, `src/dock.h`, `src/dock_ui.c`, `src/dock_ui.h`,
+`src/platform.h`, `src/platform_windows.c`, `src/platform_linux.c`,
+`src/platform_macos.c`.
+
+**The check:** the Linux build, the Windows cross-build and the headless check
+(`/tmp/dockcheck.c`) pass. The drawing of the menu was checked with a
+rendering of the bar into a bitmap.
+
+**What is left to do:** test it on Windows — the menu, the file browser, the
+file picker, the folder popup and the launch of the files.
+
+---
+
 ## Next steps
 
 > **Remember:** per the *Working rules* at the top — log the task here first,
@@ -1773,17 +1826,19 @@ browser** and **select a file or a folder** — and the **system details** (top
 right): **CPU load, RAM usage, upload/download speed, disk load, time**.
 
 **The bar is implemented** (the details are in task 29, above). The desktop
-icons are switched off, as the user decided.
+icons are switched off, as the user decided. The **popup below the bar has a
+window of its own** (task 30), so the menu of the add button is really shown.
 
 **What is left to do:**
 
-1. **Test the bar on Windows** — the slide, the clicks on the buttons, the
-   focus of the desktop, the virtual desktops. There is no Windows machine and
-   no Wine in this container, so it could not be tested here.
-2. Deploy the build to the Windows machine (`./makeLinuxToWindow.sh` does it)
-   and look at the bar.
-3. The bar is only on the **main screen** for now. The other screens are not
+1. **Test the popup on Windows** — the menu of the add button, the file
+   browser, the file picker, the folder popup and the launch of the files.
+   There is no Windows machine and no Wine in this container, so it could not
+   be tested here. The build that was deployed on 2026-10-21 has the fix.
+2. The bar is only on the **main screen** for now. The other screens are not
    in the first version.
+3. Move the headless check (`/tmp/dockcheck.c`) into `tests/` and connect it
+   to CTest.
 
 #### The old goal — the video **and** the desktop icons at the same time
 

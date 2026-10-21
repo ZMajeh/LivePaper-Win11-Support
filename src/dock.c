@@ -15,6 +15,15 @@
 // platform layer can switch it on and off.
 struct Dock *g_dock = NULL;
 
+// Hides the window of the popup and frees it. It is defined below.
+static void DockHidePopupWindow(struct Dock *dock);
+
+// Shows the popup below the bar. It is defined below.
+static void DockShowPopup(struct Dock *dock);
+
+// The row of the popup that is under the mouse. It is defined below.
+static int DockRowAt(const struct Dock *dock, int screen_x, int screen_y);
+
 // The time that the slide of the bar takes, in milliseconds.
 #define SLIDE_MS 200
 
@@ -62,10 +71,13 @@ static void DockClosePopup(struct Dock *dock) {
     dock->popup_mode = DOCK_POPUP_NONE;
     dock->row_hover = -1;
     dock->row_scroll = 0;
+    dock->popup_height = 0;
     if (dock->popup_folder) {
         free(dock->popup_folder);
         dock->popup_folder = NULL;
     }
+    // The window of the popup is not needed any more.
+    DockHidePopupWindow(dock);
 }
 
 // Adds a row to the popup.
@@ -75,6 +87,7 @@ static void DockAddRow(struct Dock *dock, const char *label, const char *path,
     if (!rows) return;
     dock->rows = rows;
     struct DockRow *row = &dock->rows[dock->row_count];
+    memset(row, 0, sizeof(*row));
     row->label = label ? strdup(label) : NULL;
     row->path = path ? strdup(path) : NULL;
     row->is_dir = is_dir;
@@ -118,16 +131,23 @@ void DockOpenFolderPopup(struct Dock *dock, const char *path, enum DockPopupMode
     dock->popup_width = DOCK_POPUP_WIDTH;
     dock->row_hover = -1;
     dock->row_scroll = 0;
+    DockShowPopup(dock);
     LOG_INFO("the popup of the folder '%s' was opened", path);
 }
 
-// Shows the menu of the add button.
-static void DockOpenAddMenu(struct Dock *dock) {
+// Shows the menu of the add button. The two options are rows of the popup, so
+// that the popup needs only one kind of row.
+void DockOpenAddMenu(struct Dock *dock) {
     DockClosePopup(dock);
+    DockAddRow(dock, "File browser", NULL, false, false, false);
+    DockAddRow(dock, "Add file or folder", NULL, false, false, false);
     dock->popup_mode = DOCK_POPUP_ADD_MENU;
     dock->popup_x = DOCK_ADD_BUTTON_X;
     dock->popup_width = DOCK_ADD_MENU_WIDTH;
-    dock->add_menu_hover = -1;
+    dock->row_hover = -1;
+    dock->row_scroll = 0;
+    DockShowPopup(dock);
+    LOG_INFO("the menu of the add button was opened");
 }
 
 // Adds an item to the bar.
@@ -203,7 +223,6 @@ void DockInit(struct Context *context, struct Dock *dock, const struct DockOptio
     dock->timeout_ms = (options ? options->timeout : 3) * 1000;
     dock->state = DOCK_STATE_HIDDEN;
     dock->row_hover = -1;
-    dock->add_menu_hover = -1;
     g_dock = dock;
 
     PlatformGetScreenSize(&dock->screen_width, &dock->screen_height);
@@ -232,7 +251,6 @@ void DockInit(struct Context *context, struct Dock *dock, const struct DockOptio
     }
     // The bar starts above the screen, so that it is not visible and it cannot
     // get the clicks of the desktop.
-    dock->window_height = dock->height;
     PlatformSetDockPosition(dock->window, 0, -dock->height);
 
     DockLoadItems(dock);
@@ -283,8 +301,7 @@ void DockSetEnabled(struct Dock *dock, bool enabled) {
             return;
         }
         dock->state = DOCK_STATE_HIDDEN;
-        dock->window_height = dock->height;
-        PlatformSetDockPosition(dock->window, 0, -dock->height);
+            PlatformSetDockPosition(dock->window, 0, -dock->height);
         LOG_INFO("the dock bar was switched on");
     } else {
         DockClosePopup(dock);
@@ -315,31 +332,74 @@ static int DockVisibleRows(const struct Dock *dock) {
     return rows;
 }
 
-// The height of the window of the bar: the bar itself and the popup below
-// it. The window is moved above the screen to hide it, so the popup has to
-// be part of it.
-static int DockWindowHeight(const struct Dock *dock) {
-    int height = dock->height;
-    if (dock->popup_mode != DOCK_POPUP_NONE) {
-        height += DockVisibleRows(dock) * DOCK_POPUP_ROW_HEIGHT;
+// The height of a row of the popup, in pixels.
+static int DockRowHeight(const struct Dock *dock) {
+    return dock->popup_mode == DOCK_POPUP_ADD_MENU ? DOCK_ADD_MENU_ROW_HEIGHT
+                                                    : DOCK_POPUP_ROW_HEIGHT;
+}
+
+// The size of the popup: it is as tall as the rows that are shown and as
+// wide as the text of the longest one.
+static void DockPopupSize(const struct Dock *dock, int *width, int *height) {
+    int row_height = DockRowHeight(dock);
+    *height = DockVisibleRows(dock) * row_height;
+    // The width of the popup is fixed: the names of the files are cut.
+    *width = dock->popup_width;
+}
+
+// Creates the window of the popup. It is a window of its own, so that it
+// covers only the part of the screen where it is.
+static bool DockCreatePopupWindow(struct Dock *dock) {
+    if (dock->popup_window) return true;
+    int width = dock->popup_width;
+    int height = DockVisibleRows(dock) * DockRowHeight(dock);
+    dock->popup_window = PlatformCreateDockPopupWindow(width, height);
+    if (!dock->popup_window) {
+        LOG_WARN("the window of the popup could not be created");
+        return false;
     }
-    return height;
+    dock->popup_renderer = SDL_CreateRenderer(dock->popup_window, -1, SDL_RENDERER_SOFTWARE);
+    if (!dock->popup_renderer) {
+        LOG_WARN("the renderer of the popup could not be created: %s", SDL_GetError());
+        PlatformDestroyDockWindow(dock->popup_window);
+        dock->popup_window = NULL;
+        return false;
+    }
+    // The popup is hidden until it is placed under the bar.
+    PlatformSetDockVisible(dock->popup_window, false);
+    return true;
 }
 
-// The window has to be as tall as the bar and the popup below it. It is
-// resized when the popup is opened or closed.
-static void DockSyncWindowSize(struct Dock *dock) {
-    if (!dock->window) return;
-    int height = DockWindowHeight(dock);
-    if (height == dock->window_height) return;
-    dock->window_height = height;
-    SDL_SetWindowSize(dock->window, dock->width, height);
-    LOG_DEBUG("the window of the bar is now %dx%d", dock->width, height);
+// Places the popup below the bar and shows it. The bar is at the top of the
+// screen, so the popup is right below it.
+static void DockShowPopup(struct Dock *dock) {
+    if (dock->popup_mode == DOCK_POPUP_NONE) return;
+    if (!DockCreatePopupWindow(dock)) return;
+
+    int width = 0, height = 0;
+    DockPopupSize(dock, &width, &height);
+    if (width != dock->popup_width || height != dock->popup_height) {
+        dock->popup_width = width;
+        dock->popup_height = height;
+        SDL_SetWindowSize(dock->popup_window, width, height);
+    }
+    // The popup hangs below the bar.
+    dock->popup_x = DOCK_ADD_BUTTON_X;
+    dock->popup_y = dock->window_y + dock->height;
+    PlatformSetDockPosition(dock->popup_window, dock->popup_x, dock->popup_y);
+    PlatformSetDockVisible(dock->popup_window, true);
 }
 
-// The y coordinate of the popup, in the window.
-static int DockPopupY(const struct Dock *dock) {
-    return dock->height;
+// Hides the popup and frees its window.
+static void DockHidePopupWindow(struct Dock *dock) {
+    if (!dock->popup_window) return;
+    PlatformSetDockVisible(dock->popup_window, false);
+    if (dock->popup_renderer) {
+        SDL_DestroyRenderer(dock->popup_renderer);
+        dock->popup_renderer = NULL;
+    }
+    PlatformDestroyDockWindow(dock->popup_window);
+    dock->popup_window = NULL;
 }
 
 // Whether the point is inside the bar or inside the popup.
@@ -347,10 +407,8 @@ static bool DockPointInside(const struct Dock *dock, int x, int y) {
     if (y < 0 || y >= dock->height) {
         // The popup is below the bar.
         if (dock->popup_mode == DOCK_POPUP_NONE) return false;
-        if (y < DockPopupY(dock)) return false;
-        int rows = DockVisibleRows(dock);
-        int popup_height = rows * DOCK_POPUP_ROW_HEIGHT;
-        if (y >= DockPopupY(dock) + popup_height) return false;
+        if (y < dock->popup_y || y >= dock->popup_y + dock->popup_height) return false;
+        if (x < dock->popup_x || x >= dock->popup_x + dock->popup_width) return false;
     }
     if (x < 0 || x >= dock->width) return false;
     return true;
@@ -381,7 +439,7 @@ void DockUpdate(struct Context *context, struct Dock *dock) {
             if (at_top) {
                 dock->state = DOCK_STATE_SHOWING;
                 dock->anim_start_ms = now;
-                dock->window_y = -DockWindowHeight(dock);
+                dock->window_y = -dock->height;
                 LOG_INFO("the dock bar is coming out (the mouse is at the top of the screen)");
             }
             break;
@@ -392,7 +450,7 @@ void DockUpdate(struct Context *context, struct Dock *dock) {
             if (progress > 100) progress = 100;
             // The bar comes down from above the screen. The window is moved
             // as a whole, so the popup below the bar comes with it.
-            int y = -DockWindowHeight(dock) + (DockWindowHeight(dock) * progress) / 100;
+            int y = -dock->height + (dock->height * progress) / 100;
             dock->window_y = y;
             PlatformSetDockPosition(dock->window, 0, y);
             if (progress >= 100) {
@@ -409,7 +467,8 @@ void DockUpdate(struct Context *context, struct Dock *dock) {
             bool over_bar = dock->mouse_y >= 0 && dock->mouse_y < dock->height
                             && dock->mouse_x >= 0 && dock->mouse_x < dock->width;
             bool over_popup = dock->popup_mode != DOCK_POPUP_NONE
-                              && dock->mouse_y >= dock->height;
+                              && dock->screen_mouse_y >= dock->popup_y
+                              && dock->screen_mouse_y < dock->popup_y + dock->popup_height;
             if (over_bar || over_popup) {
                 dock->last_input_ms = now;
             }
@@ -431,24 +490,39 @@ void DockUpdate(struct Context *context, struct Dock *dock) {
             uint64_t elapsed = now - dock->anim_start_ms;
             int progress = (int)((elapsed * 100) / SLIDE_MS);
             if (progress > 100) progress = 100;
-            int total = DockWindowHeight(dock);
-            int y = -((total * progress) / 100);
+            int y = -((dock->height * progress) / 100);
             dock->window_y = y;
             PlatformSetDockPosition(dock->window, 0, y);
             if (progress >= 100) {
                 dock->state = DOCK_STATE_HIDDEN;
-                PlatformSetDockPosition(dock->window, 0, -total);
+                PlatformSetDockPosition(dock->window, 0, -dock->height);
                 LOG_DEBUG("the dock bar is hidden");
             }
             break;
         }
     }
 
+    // The popup is closed when the bar goes away.
+    if (dock->popup_mode != DOCK_POPUP_NONE &&
+        (dock->state == DOCK_STATE_HIDING || dock->state == DOCK_STATE_HIDDEN)) {
+        DockClosePopup(dock);
+    }
+
     // The mouse is over the bar or over the popup.
     dock->mouse_inside = DockPointInside(dock, dock->mouse_x, dock->mouse_y);
+    // The row of the popup under the mouse. It is asked for here and not only
+    // in the events, because the popup has a window of its own and the mouse
+    // events of the desktop do not reach the program.
+    dock->row_hover = DockRowAt(dock, screen_x, screen_y);
 
-    // The window is resized when the popup is opened or closed.
-    DockSyncWindowSize(dock);
+    // The popup hangs below the bar, so it follows the bar when it moves.
+    if (dock->popup_mode != DOCK_POPUP_NONE && dock->popup_window) {
+        dock->popup_y = dock->window_y + dock->height;
+        PlatformSetDockPosition(dock->popup_window, dock->popup_x, dock->popup_y);
+        // Showing a window can change its place in the z-order, so the popup
+        // is put above the desktop again.
+        PlatformPlaceDockPopupWindow(dock->popup_window);
+    }
 }
 
 // The drawing of the bar. It is only done when the bar is visible, so that
@@ -469,12 +543,13 @@ int DockItemX(int index) {
     return DOCK_ADD_BUTTON_X + DOCK_ADD_BUTTON_SIZE + 8 + index * DOCK_ITEM_WIDTH;
 }
 
-// The row of the popup that is under the mouse, or -1.
-static int DockRowAt(const struct Dock *dock, int x, int y) {
+// The row of the popup that is under the mouse, or -1. The position is the
+// one of the mouse on the screen.
+static int DockRowAt(const struct Dock *dock, int screen_x, int screen_y) {
     if (dock->popup_mode == DOCK_POPUP_NONE) return -1;
-    if (y < dock->height) return -1;
-    if (x < dock->popup_x || x >= dock->popup_x + dock->popup_width) return -1;
-    int index = dock->row_scroll + (y - dock->height) / DOCK_POPUP_ROW_HEIGHT;
+    if (screen_y < dock->popup_y || screen_y >= dock->popup_y + dock->popup_height) return -1;
+    if (screen_x < dock->popup_x || screen_x >= dock->popup_x + dock->popup_width) return -1;
+    int index = dock->row_scroll + (screen_y - dock->popup_y) / DockRowHeight(dock);
     if (index < 0 || index >= dock->row_count) return -1;
     return index;
 }
@@ -493,18 +568,6 @@ static int DockItemAt(const struct Dock *dock, int x, int y) {
 static bool DockAddButtonAt(const struct Dock *dock, int x, int y) {
     if (y < 0 || y >= dock->height) return false;
     return x >= DOCK_ADD_BUTTON_X && x < DOCK_ADD_BUTTON_X + DOCK_ADD_BUTTON_SIZE;
-}
-
-// Whether the menu of the add button is under the mouse. It returns 0 for the
-// file browser, 1 for the file or the folder, and -1 for nothing.
-static int DockAddMenuAt(const struct Dock *dock, int x, int y) {
-    if (dock->popup_mode != DOCK_POPUP_ADD_MENU) return -1;
-    if (y < dock->height) return -1;
-    if (x < DOCK_ADD_BUTTON_X || x >= DOCK_ADD_BUTTON_X + DOCK_ADD_MENU_WIDTH) return -1;
-    int index = (y - dock->height) / DOCK_ADD_MENU_ROW_HEIGHT;
-    if (index == 0) return 0;
-    if (index == 1) return 1;
-    return -1;
 }
 
 // The row of the popup that was clicked.
@@ -547,7 +610,7 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
         if (event->window.event == SDL_WINDOWEVENT_CLOSE) {
             // The bar was closed by the user: it is only hidden.
             dock->state = DOCK_STATE_HIDDEN;
-            PlatformSetDockPosition(dock->window, 0, -DockWindowHeight(dock));
+            PlatformSetDockPosition(dock->window, 0, -dock->height);
         }
         return;
     }
@@ -565,7 +628,9 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
     // the desktop.
     int screen_x = 0, screen_y = 0;
     PlatformGetCursorPos(&screen_x, &screen_y);
-    // The window of the bar is at the left of the screen.
+    // The window of the bar is at the left of the screen, so the coordinates
+    // of the mouse in the window are the ones on the screen, shifted by the
+    // position of the window.
     int x = screen_x;
     int y = screen_y - dock->window_y;
 
@@ -574,8 +639,7 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
             dock->mouse_x = x;
             dock->mouse_y = y;
             // The row of the popup under the mouse.
-            dock->row_hover = DockRowAt(dock, x, y);
-            dock->add_menu_hover = DockAddMenuAt(dock, x, y);
+            dock->row_hover = DockRowAt(dock, screen_x, screen_y);
             break;
 
         case SDL_MOUSEBUTTONDOWN: {
@@ -589,21 +653,26 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
                 break;
             }
 
-            // The menu of the add button.
-            int menu = DockAddMenuAt(dock, x, y);
-            if (menu == 0) {
-                // The file browser of the system.
-                LOG_INFO("the file browser of the system was opened from the bar");
-                DockClosePopup(dock);
-                LauncherOpenFileManager(NULL);
-                break;
-            }
-            if (menu == 1) {
-                // The file or the folder is chosen.
-                LOG_INFO("the file picker of the bar was opened");
-                char *home = LauncherHomeFolder();
-                DockOpenFolderPopup(dock, home ? home : "/", DOCK_POPUP_PICKER);
-                free(home);
+            // The rows of the popup. The menu of the add button is a popup
+            // as well, so it is handled here too.
+            int row = DockRowAt(dock, screen_x, screen_y);
+            if (row >= 0) {
+                if (dock->popup_mode == DOCK_POPUP_ADD_MENU) {
+                    if (row == 0) {
+                        // The file browser of the system.
+                        LOG_INFO("the file browser of the system was opened from the bar");
+                        DockClosePopup(dock);
+                        LauncherOpenFileManager(NULL);
+                    } else {
+                        // The file or the folder is chosen.
+                        LOG_INFO("the file picker of the bar was opened");
+                        char *home = LauncherHomeFolder();
+                        DockOpenFolderPopup(dock, home ? home : "/", DOCK_POPUP_PICKER);
+                        free(home);
+                    }
+                    break;
+                }
+                DockClickRow(dock, row);
                 break;
             }
 
@@ -615,13 +684,6 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
                 } else {
                     DockOpenAddMenu(dock);
                 }
-                break;
-            }
-
-            // The rows of the popup.
-            int row = DockRowAt(dock, x, y);
-            if (row >= 0) {
-                DockClickRow(dock, row);
                 break;
             }
 

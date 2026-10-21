@@ -69,6 +69,10 @@ SDL_Window *PlatformCreateDockWindow(int width, int height) {
     return window;
 }
 
+SDL_Window *PlatformCreateDockPopupWindow(int width, int height) {
+    return PlatformCreateDockWindow(width, height);
+}
+
 void PlatformDestroyDockWindow(SDL_Window *window) {
     if (window) SDL_DestroyWindow(window);
 }
@@ -76,6 +80,19 @@ void PlatformDestroyDockWindow(SDL_Window *window) {
 void PlatformSetDockPosition(SDL_Window *window, int x, int y) {
     if (!window) return;
     SDL_SetWindowPosition(window, x, y);
+}
+
+void PlatformSetDockVisible(SDL_Window *window, bool visible) {
+    if (!window) return;
+    if (visible) {
+        SDL_ShowWindow(window);
+    } else {
+        SDL_HideWindow(window);
+    }
+}
+
+void PlatformPlaceDockPopupWindow(SDL_Window *window) {
+    (void)window;
 }
 
 void PlatformGetCursorPos(int *x, int *y) {

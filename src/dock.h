@@ -52,6 +52,8 @@ struct DockRow {
     bool is_dir;      // it is a folder
     bool is_up;       // the row goes to the parent folder
     bool is_add_dir;  // the row adds the folder that is shown
+    bool is_browser;  // the row opens the file browser of the system
+    bool is_picker;   // the row opens the file picker
 };
 
 // The layout of the bar. The values are shared by the model (the hit
@@ -74,7 +76,7 @@ struct DockRow {
 
 // The width of the menu of the add button, in pixels. It has to be wide
 // enough for the longest text of the menu ("Add file or folder").
-#define DOCK_ADD_MENU_WIDTH 220
+#define DOCK_ADD_MENU_WIDTH 240
 
 // The height of a row of the menu of the add button, in pixels.
 #define DOCK_ADD_MENU_ROW_HEIGHT 20
@@ -92,7 +94,6 @@ struct Dock {
     SDL_Window *window;           // the window of the bar
     SDL_Renderer *renderer;       // its renderer
     int width, height;            // the size of the bar
-    int window_height;            // the size of the window (the bar and the popup)
     int screen_width, screen_height;
 
     enum DockState state;
@@ -104,19 +105,21 @@ struct Dock {
     int item_count;
     int item_capacity;
 
-    // The menu of the add button.
-    bool add_menu_open;
-    int add_menu_hover;           // -1: none, 0: the file browser, 1: the file
+    // The menu of the add button is a popup as well, so it does not need a
+    // state of its own.
 
-    // The popup below the bar.
+    // The popup below the bar. It is a window of its own, so that it does not
+    // cover the rest of the screen with the background of the bar.
     enum DockPopupMode popup_mode;
+    SDL_Window *popup_window;     // the window of the popup
+    SDL_Renderer *popup_renderer; // its renderer
     char *popup_folder;           // the folder that is shown
     struct DockRow *rows;         // the rows of the popup
     int row_count;
     int row_hover;                // the row under the mouse
     int row_scroll;               // the first row that is shown
-    int popup_x;                  // the x coordinate of the popup
-    int popup_width;              // the width of the popup
+    int popup_x, popup_y;         // the position of the popup on the screen
+    int popup_width, popup_height; // the size of the popup
 
     int screen_mouse_x, screen_mouse_y;  // the position of the mouse on the screen
     int mouse_x, mouse_y;         // the position of the mouse in the window
@@ -157,6 +160,10 @@ void DockAddItem(struct Dock *dock, const char *path, enum DockItemKind kind);
 // parent folder, the content of the folder and the row that adds the folder
 // to the bar.
 void DockOpenFolderPopup(struct Dock *dock, const char *path, enum DockPopupMode mode);
+
+// Opens the menu of the add button: the file browser of the system and the
+// file picker.
+void DockOpenAddMenu(struct Dock *dock);
 
 // Reads the items of the bar from the config file and writes them back.
 void DockLoadItems(struct Dock *dock);

@@ -87,11 +87,15 @@ static char config_file[MAX_PATH];
 
 // The window of the dock bar. It has to follow the wallpaper when the user
 // switches to another virtual desktop.
+// The window of the bar and the window of the popup below it. They are
+// placed above the desktop, so that they get the mouse clicks.
 static SDL_Window *g_dock_window = NULL;
+static SDL_Window *g_dock_popup_window = NULL;
 
 // Puts the bar of the dock directly above the window of the desktop. It is
 // defined below the function that creates the window of the bar.
 static void PlaceDockAboveDesktop(void);
+static void PlaceDockWindowAboveDesktop(SDL_Window *window);
 
 static void InitConfigPath() {
     if (config_file[0]) return; // already initialized
@@ -967,14 +971,11 @@ bool PlatformAttachWallpaper(struct Context *context, int strategy) {
 // The dock bar
 // ---------------------------------------------------------------------------
 
-// The window of the bar. It is a top level window, so that it is above the
-// wallpaper and it gets the mouse clicks. It must not steal the focus from
-// the desktop, and it must not show up in the task bar.
-//
-// The window is always visible: it is hidden by moving it above the screen,
-// so that it cannot get the clicks of the desktop and SDL keeps the state of
-// the window in sync.
-SDL_Window *PlatformCreateDockWindow(int width, int height) {
+// Creates a window of the dock. The bar of the dock and the popup below it
+// are both top level windows, so that they are above the wallpaper and they
+// get the mouse clicks. They must not steal the focus from the desktop, and
+// they must not show up in the task bar.
+static SDL_Window *CreateDockWindow(int width, int height) {
     SDL_Window *window = SDL_CreateWindow("live-paper-dock", 0, -height, width, height,
                                           SDL_WINDOW_BORDERLESS);
     if (!window) {
@@ -998,7 +999,13 @@ SDL_Window *PlatformCreateDockWindow(int width, int height) {
         ex_style &= ~WS_EX_APPWINDOW;
         SetWindowLong(hwnd, GWL_EXSTYLE, ex_style);
     }
+    return window;
+}
 
+// The window of the bar of the dock.
+SDL_Window *PlatformCreateDockWindow(int width, int height) {
+    SDL_Window *window = CreateDockWindow(width, height);
+    if (!window) return NULL;
     // The bar belongs to the virtual desktop that is shown now: it has to
     // follow the wallpaper when the user switches to another one.
     g_dock_window = window;
@@ -1006,18 +1013,30 @@ SDL_Window *PlatformCreateDockWindow(int width, int height) {
     return window;
 }
 
-// Puts the bar of the dock directly above the window of the desktop, so that
+// Creates the window of the popup below the bar. It is a window of its own,
+// so that it covers only the part of the screen where it is.
+SDL_Window *PlatformCreateDockPopupWindow(int width, int height) {
+    SDL_Window *window = CreateDockWindow(width, height);
+    if (!window) return NULL;
+    g_dock_popup_window = window;
+    // The popup has to be above the desktop as well, so that it gets the
+    // clicks of the mouse.
+    PlaceDockWindowAboveDesktop(window);
+    return window;
+}
+
+// Puts a window of the dock directly above the window of the desktop, so that
 // it is visible over the wallpaper and it gets the mouse clicks. It is below
 // the other applications, like the wallpaper itself.
-static void PlaceDockAboveDesktop(void) {
-    if (!g_dock_window) return;
+static void PlaceDockWindowAboveDesktop(SDL_Window *window) {
+    if (!window) return;
     // The window of the desktop of the virtual desktop that is shown now.
     HWND progman = FindCurrentDesktopProgman();
     if (!progman) return;
 
     SDL_SysWMinfo info;
     SDL_VERSION(&info.version);
-    if (!SDL_GetWindowWMInfo(g_dock_window, &info)) return;
+    if (!SDL_GetWindowWMInfo(window, &info)) return;
     HWND dock_hwnd = info.info.win.window;
 
     // The window that is directly above the desktop. The bar is inserted
@@ -1037,8 +1056,18 @@ static void PlaceDockAboveDesktop(void) {
     LOG_DEBUG("the bar of the dock was placed above the desktop");
 }
 
+// Puts the bar of the dock directly above the window of the desktop.
+static void PlaceDockAboveDesktop(void) {
+    PlaceDockWindowAboveDesktop(g_dock_window);
+    // The popup of the bar has to be above the desktop as well.
+    if (g_dock_popup_window) {
+        PlaceDockWindowAboveDesktop(g_dock_popup_window);
+    }
+}
+
 void PlatformDestroyDockWindow(SDL_Window *window) {
     if (g_dock_window == window) g_dock_window = NULL;
+    if (g_dock_popup_window == window) g_dock_popup_window = NULL;
     if (window) SDL_DestroyWindow(window);
 }
 
@@ -1054,6 +1083,33 @@ void PlatformSetDockPosition(SDL_Window *window, int x, int y) {
         return;
     }
     SDL_SetWindowPosition(window, x, y);
+}
+
+void PlatformSetDockVisible(SDL_Window *window, bool visible) {
+    if (!window) return;
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (SDL_GetWindowWMInfo(window, &info)) {
+        HWND hwnd = info.info.win.window;
+        // The window is shown without being activated: the focus stays on the
+        // desktop, so that the desktop icons keep working. SW_SHOWNA does not
+        // change the z-order of the window either.
+        ShowWindow(hwnd, visible ? SW_SHOWNA : SW_HIDE);
+        return;
+    }
+    if (visible) {
+        SDL_ShowWindow(window);
+    } else {
+        SDL_HideWindow(window);
+    }
+}
+
+// Puts the window of the popup again in the right place of the z-order.
+// Showing a window can change its place, and the popup has to be above the
+// desktop, so that it gets the clicks of the mouse.
+void PlatformPlaceDockPopupWindow(SDL_Window *window) {
+    if (!window) return;
+    PlaceDockWindowAboveDesktop(window);
 }
 
 void PlatformGetCursorPos(int *x, int *y) {

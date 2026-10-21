@@ -162,56 +162,47 @@ static void DrawAddButton(SDL_Renderer *renderer, const struct Dock *dock) {
     FillRect(renderer, x + 13, y + 7, 2, 14, r, g, b, 255);
 }
 
-// Draws the menu of the add button: the two options.
-static void DrawAddMenu(SDL_Renderer *renderer, const struct Dock *dock) {
-    int x = DOCK_ADD_BUTTON_X;
-    int y = dock->height;
-    FillRect(renderer, x, y, DOCK_ADD_MENU_WIDTH, DOCK_ADD_MENU_ROW_HEIGHT * 2,
-             COLOR_POPUP_R, COLOR_POPUP_G, COLOR_POPUP_B, COLOR_POPUP_A);
+// Draws the popup below the bar: the menu of the add button or the list of
+// the files of a folder. The popup has a window of its own.
+void DockUiDrawPopup(struct Dock *dock) {
+    if (dock->popup_mode == DOCK_POPUP_NONE || !dock->popup_renderer) return;
+    SDL_Renderer *renderer = dock->popup_renderer;
+    int row_height = dock->popup_mode == DOCK_POPUP_ADD_MENU ? DOCK_ADD_MENU_ROW_HEIGHT
+                                                            : DOCK_POPUP_ROW_HEIGHT;
 
-    const char *options[2] = { "File browser", "Add file or folder" };
-    for (int i = 0; i < 2; i++) {
-        int row_y = y + i * DOCK_ADD_MENU_ROW_HEIGHT;
-        if (dock->add_menu_hover == i) {
-            FillRect(renderer, x, row_y, DOCK_ADD_MENU_WIDTH, DOCK_ADD_MENU_ROW_HEIGHT,
-                     COLOR_ACCENT_R, COLOR_ACCENT_G, COLOR_ACCENT_B, 90);
-        }
-        int text_y = row_y + (DOCK_ADD_MENU_ROW_HEIGHT - FONT_HEIGHT * FONT_SCALE) / 2;
-        DrawRowLabel(renderer, options[i], x + 8, text_y,
-                     DOCK_ADD_MENU_WIDTH - 16, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
-    }
-}
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    FillRect(renderer, 0, 0, dock->popup_width, dock->popup_height,
+             COLOR_POPUP_R, COLOR_POPUP_G, COLOR_POPUP_B, 255);
 
-// Draws the popup with the files of a folder.
-static void DrawPopup(SDL_Renderer *renderer, const struct Dock *dock) {
-    if (dock->popup_mode == DOCK_POPUP_NONE) return;
-    int x = dock->popup_x;
-    int y = dock->height;
     int rows = DockUiVisibleRows(dock);
-    int height = rows * DOCK_POPUP_ROW_HEIGHT;
-
-    FillRect(renderer, x, y, dock->popup_width, height,
-             COLOR_POPUP_R, COLOR_POPUP_G, COLOR_POPUP_B, COLOR_POPUP_A);
-
+    bool is_menu = dock->popup_mode == DOCK_POPUP_ADD_MENU;
     for (int i = 0; i < rows; i++) {
         int index = dock->row_scroll + i;
         if (index >= dock->row_count) break;
         struct DockRow *row = &dock->rows[index];
-        int row_y = y + i * DOCK_POPUP_ROW_HEIGHT;
+        int row_y = i * row_height;
 
         if (index == dock->row_hover) {
-            FillRect(renderer, x, row_y, dock->popup_width, DOCK_POPUP_ROW_HEIGHT,
-                     COLOR_ACCENT_R, COLOR_ACCENT_G, COLOR_ACCENT_B, 90);
+            FillRect(renderer, 0, row_y, dock->popup_width, row_height,
+                     COLOR_ACCENT_R, COLOR_ACCENT_G, COLOR_ACCENT_B, 150);
         }
 
-        int text_y = row_y + (DOCK_POPUP_ROW_HEIGHT - FONT_HEIGHT * FONT_SCALE) / 2;
-        if (!row->is_up && !row->is_add_dir) {
-            DrawIcon(renderer, x + 6, row_y + 4, row->is_dir,
-                     COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+        int text_y = row_y + (row_height - FONT_HEIGHT * FONT_SCALE) / 2;
+        // The rows of the menu of the add button have no icon.
+        int text_x = 8;
+        if (!is_menu) {
+            if (!row->is_up && !row->is_add_dir) {
+                DrawIcon(renderer, 6, row_y + 4, row->is_dir,
+                         COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+            }
+            text_x = 22;
         }
-        DrawRowLabel(renderer, row->label, x + 22, text_y,
-                     dock->popup_width - 28, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+        DrawRowLabel(renderer, row->label, text_x, text_y,
+                     dock->popup_width - text_x - 6, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
     }
+
+    SDL_RenderPresent(renderer);
 }
 
 // The width of the system details at the right of the bar. The items of the
@@ -251,12 +242,8 @@ void DockUiDraw(struct Dock *dock) {
     DrawItems(renderer, dock);
     DrawSystemDetails(renderer, dock);
 
-    // The popup below the bar.
-    if (dock->popup_mode == DOCK_POPUP_ADD_MENU) {
-        DrawAddMenu(renderer, dock);
-    } else {
-        DrawPopup(renderer, dock);
-    }
-
     SDL_RenderPresent(renderer);
+
+    // The popup below the bar has a window of its own.
+    DockUiDrawPopup(dock);
 }

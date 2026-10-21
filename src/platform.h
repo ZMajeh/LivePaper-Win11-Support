@@ -113,12 +113,25 @@ void PlatformRefreshDesktopIcons(void);
 // the screen. Returns NULL if the window could not be created.
 SDL_Window *PlatformCreateDockWindow(int width, int height);
 
+// Creates the window of the popup below the bar. It is a window of its own,
+// so that it covers only the part of the screen where it is. Returns NULL if
+// the window could not be created.
+SDL_Window *PlatformCreateDockPopupWindow(int width, int height);
+
 // Destroys the window of the bar.
 void PlatformDestroyDockWindow(SDL_Window *window);
 
 // Moves the window of the bar. The y coordinate is negative when the bar is
 // hidden above the screen.
 void PlatformSetDockPosition(SDL_Window *window, int x, int y);
+
+// Shows or hides a window of the bar. A hidden window does not get the
+// clicks of the desktop.
+void PlatformSetDockVisible(SDL_Window *window, bool visible);
+
+// Puts the window of the popup again in the right place of the z-order, after
+// it was shown.
+void PlatformPlaceDockPopupWindow(SDL_Window *window);
 
 // The position of the mouse on the whole screen. The bar has no focus, so
 // it does not get the mouse events of the desktop: the position has to be
