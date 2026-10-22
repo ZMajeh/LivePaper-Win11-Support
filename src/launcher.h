@@ -16,5 +16,15 @@ bool LauncherOpenFolder(const char *path);
 // folder of the user, if the path is NULL).
 bool LauncherOpenFileManager(const char *path);
 
+// Opens the native file dialog of the system and lets the user choose a file
+// or a folder. The dialog runs on its own thread, so that the program keeps
+// running while it is open. The chosen path is delivered asynchronously to
+// the main thread with an SDL event; the main loop has to handle the event
+// and add the chosen path to the bar. The function returns NULL immediately
+// (the result is not available synchronously). On platforms without a native
+// dialog it returns NULL and the custom popup is used instead.
+// The caller does not have to free anything.
+char *LauncherPickFile(void);
+
 // The home folder of the user. The caller has to free the string.
 char *LauncherHomeFolder(void);

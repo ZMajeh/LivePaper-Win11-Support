@@ -16,6 +16,7 @@
 #include "dock_metrics.h"
 
 Uint32 g_open_file_event = 0;
+Uint32 g_pick_file_event = 0;
 
 // The options of the bar of the dock, that come from the command line.
 static struct DockOptions g_dock_options = {
@@ -63,6 +64,7 @@ static bool RendererIsOnScreen(SDL_Renderer *renderer) {
 
 void InitContext(struct Context *ctx) {
     g_open_file_event = SDL_RegisterEvents(1);
+    g_pick_file_event = SDL_RegisterEvents(1);
     if (SDL_Init(SDL_INIT_VIDEO) != 0) FAIL_WITH("can't initialize SDL");
     LOG_INFO("SDL %d.%d.%d initialized", SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL);
     PlatformInit(ctx);
@@ -479,6 +481,20 @@ int main(int argc, char *argv[]) {
                 context.file = event.user.data1;
                 video = VideoLoad(&context);
                 LogDiagnostics(&context, video);
+            } else if(event.type == g_pick_file_event) {
+                // A file or a folder was chosen in the native file picker of
+                // Windows. Add it to the bar, deciding whether it is a file
+                // or a folder.
+                const char *path = event.user.data1;
+                if (path && g_dock) {
+                    enum DockItemKind kind = DirIsFolder(path)
+                                                   ? DOCK_ITEM_FOLDER
+                                                   : DOCK_ITEM_FILE;
+                    DockAddItem(g_dock, path, kind);
+                    LOG_INFO("the chosen %s was added to the bar",
+                             kind == DOCK_ITEM_FOLDER ? "folder" : "file");
+                }
+                free((void *)path);
             } else {
                 // The mouse events of the bar of the dock.
                 DockHandleEvent(&context, &dock, &event);

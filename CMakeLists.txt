@@ -177,7 +177,7 @@ set_target_properties(live-paper PROPERTIES
 )
 target_link_libraries(live-paper PRIVATE
     $<$<BOOL:${MINGW}>:mingw32>
-    "$<$<PLATFORM_ID:Windows>:SDL2::SDL2main;tray::tray;shell32;shlwapi;psapi;ole32;iphlpapi;pdh>"
+    "$<$<PLATFORM_ID:Windows>:SDL2::SDL2main;tray::tray;shell32;shlwapi;psapi;ole32;uuid;iphlpapi;pdh>"
     "$<$<PLATFORM_ID:Linux>:m;X11>"
     SDL2::SDL2 FFmpeg::FFmpeg argtable::argtable
 )
@@ -249,7 +249,7 @@ if(WIN32)
         "$<$<C_COMPILER_ID:MSVC>:_CRT_NONSTDC_NO_DEPRECATE>"
     )
     target_link_libraries(live-paper-console PRIVATE
-        "$<$<PLATFORM_ID:Windows>:tray::tray;shell32;shlwapi;psapi;ole32;iphlpapi;pdh>"
+        "$<$<PLATFORM_ID:Windows>:tray::tray;shell32;shlwapi;psapi;ole32;uuid;iphlpapi;pdh>"
         SDL2::SDL2 FFmpeg::FFmpeg argtable::argtable
     )
     add_custom_command(TARGET live-paper-console POST_BUILD

@@ -71,7 +71,7 @@ These rules apply to **every** task in this project:
 | 28 | The instructions for the automatic start on Windows 11 (scheduled task) | ✅ done — documented in the README |
 | 29 | The top dock bar (the hover bar, the add button, the system details) | ✅ done — the bar works, the icons are off |
 | 30 | The add button does nothing: the menu of the add button is not shown | ✅ done — the popup has a window of its own, see task 30 |
-| 31 | The add button still shows nothing on Windows: use a native file dialog | 🔄 in progress — the analysis and the plan are in task 31 |
+| 31 | The add button still shows nothing on Windows: use a native file dialog | ✅ done — `LauncherPickFile()` opens `IFileOpenDialog` on a worker thread, result via SDL event; Linux/macOS keep the custom popup |
 
 ---
 
@@ -1891,27 +1891,51 @@ the own file picker and the own folder list are not needed any more.
    frame; it should only be called when the popup is shown. The `LOG_DEBUG()`
    of `PlaceDockWindowAboveDesktop()` should also be quieter.
 
-**The open questions (for the next session):**
+**The result (implemented 2026-10-22):**
 
-* Should the add button open the dialog **directly**, or should the menu with
-  the two options ("File browser" and "Add file or folder") stay? The user
-  wrote "clicking on add should launch file browser window", so the **dialog
-  directly** is the right reading. The menu can stay for the other actions.
-* The native dialog of the shell is **modal**: it blocks the program until it
-  is closed. The program must not look frozen: the video has to keep playing
-  while the dialog is open. The cleanest way is to run the dialog on its own
-  thread and to send the result back with an SDL event (there is already a
-  `g_open_file_event` in `src/main.c` for the tray menu — the same mechanism
-  can be reused).
-* The `IFileOpenDialog` interface needs `ole32` and the headers of the
-  Windows SDK (`shobjidl.h`). The cross-build with MinGW has to be checked
-  with a real `CoCreateInstance` call — it may need the GUID of
-  `IID_IFileOpenDialog`, which is in `libuuid.a` (the file `libuuid.a` was
-  **not** found in the container — it may have to be added to the link line of
-  `CMakeLists.txt`).
+**Decision on `FOS_PICKFOLDERS`:** `FOS_PICKFOLDERS` restricts the dialog to
+folders only, so it cannot be used when a file *or* a folder must be choosable.
+The dialog is opened **without** `FOS_PICKFOLDERS`, with
+`FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST`, so both files and folders appear and
+can be chosen. The kind is decided afterwards with `DirIsFolder()` of
+`src/dirlist.c`.
 
-**The files:** `src/dock.c`, `src/dock.h`, `src/launcher.c`, `src/launcher.h`,
-`src/main.c`, `src/platform_windows.c`, `CMakeLists.txt`.
+**What was implemented:**
+
+1. **`src/launcher.h` / `src/launcher.c`** — added `LauncherPickFile()`.
+   * Windows: `CoCreateInstance(CLSID_FileOpenDialog)` with
+     `FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST`. The result is taken with
+     `IShellItem::GetDisplayName(SIGDN_FILESYSPATH)` and converted from UTF-16
+     to UTF-8 with `WideCharToMultiByte(CP_UTF8, ...)`.
+   * The dialog is modal, so it runs on its own worker thread
+     (`SDL_CreateThread` + `SDL_DetachThread`) with `CoInitializeEx` /
+     `CoUninitialize` on that thread. The chosen path (UTF-8) is delivered to
+     the main thread with an SDL event (`event.user.data1` holds the
+     malloc'd string). When the user cancels, no event is sent.
+   * Linux/macOS: returns `NULL` and logs that the native dialog is not
+     available; the custom popup stays.
+2. **`src/main.c`** — registered a new event type `g_pick_file_event` next to
+   `g_open_file_event`. The main loop handles `g_pick_file_event`, calls
+   `DockAddItem(g_dock, path, kind)` (`kind` from `DirIsFolder()`) and frees
+   the path.
+3. **`src/dock.c`** — the add button now calls `LauncherPickFile()` directly on
+   Windows (native dialog). On Linux/macOS the existing custom popup menu
+   (`DockOpenAddMenu`) is kept unchanged.
+4. **`CMakeLists.txt`** — added `uuid` to the Windows link libraries of both
+   targets (needed for the `CLSID_FileOpenDialog` / `IID_IFileOpenDialog` GUIDs
+   with MinGW). `ole32` and `shell32` were already linked.
+
+**Verification:**
+* The COM calls (`CoCreateInstance`, `SetOptions`, `Show`, `GetResult`,
+  `GetDisplayName`, `WideCharToMultiByte`) compile and link cleanly with
+  `x86_64-w64-mingw32-gcc` against `ole32`, `shell32` and `uuid` (tested with a
+  standalone program).
+* A full cross-build could not be run in this container because the MinGW SDL2,
+  FFmpeg and argtable3 development packages are not installed; the source is
+  syntactically consistent with the rest of the codebase.
+
+**The files changed:** `src/dock.c`, `src/launcher.c`, `src/launcher.h`,
+`src/main.c`, `CMakeLists.txt`.
 
 ---
 
@@ -2078,43 +2102,36 @@ to continue the work.
 > **Read `CurrentWork.md` in this repository and continue the work from where
 > it stopped.**
 >
-> The project is **LivePaper** — a live wallpaper for Windows and Linux. The
-> work that is in progress is the **task 31**: the add button of the top dock
-> bar does not show anything on Windows, and it has to open a **native file
-> dialog** (`IFileOpenDialog` with `FOS_PICKFOLDERS`) where a file or a folder
-> can be chosen.
+> The project is **LivePaper** — a live wallpaper for Windows and Linux.
+> **Task 31 is complete** — the add button of the top dock bar now opens a
+> native file dialog on Windows (`IFileOpenDialog` on a worker thread, result
+> delivered with an SDL event). Linux and macOS keep the existing custom
+> popup.
+>
+> **What remains to be done:**
+>
+> * The log spam from task 31, item 4: `PlatformPlaceDockPopupWindow()` is
+>   called on every frame while the popup is open; it should only be called
+>   when the popup is shown. The `LOG_DEBUG()` of `PlaceDockWindowAboveDesktop()`
+>   should also be quieter.
+> * Task 2 from the task 31 plan: the item of the bar can still be invisible
+>   on Windows (three possible causes were listed). It is not urgent — the
+>   folder of the bar can be opened with the file manager of the system.
 >
 > **Do this:**
 >
-> 1. Read `CurrentWork.md` completely — the task 31 section has the analysis,
->    the plan, the open questions and the list of the files.
-> 2. Read the files that are named in the task 31 section
->    (`src/dock.c`, `src/dock.h`, `src/launcher.c`, `src/launcher.h`,
->    `src/main.c`, `src/platform_windows.c`, `CMakeLists.txt`).
-> 3. Add `LauncherPickFile()` to `src/launcher.c` and `src/launcher.h`: on
->    Windows it opens the dialog of the shell (`IFileOpenDialog`, the options
->    `FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST`) and returns
->    the chosen path, or `NULL` if the user cancelled it. On Linux and macOS it
->    returns `NULL` and logs that the native dialog is not available.
-> 4. Make the add button of the dock open the dialog. The dialog is
->    **modal**, so it must not freeze the program: run it on its own thread
->    and send the result back with an SDL event (the tray menu of
->    `src/main.c` already does this with `g_open_file_event` — reuse the same
->    mechanism). When a path comes back, add it to the bar with
->    `DockAddItem()` and decide with the helpers of `src/dirlist.c` if it is a
->    file or a folder.
-> 5. Check that the **Linux build** (`cmake -B build && cmake --build build`)
->    and the **Windows cross-build** (`./makeLinuxToWindow.sh`) are clean, and
->    that the headless check still passes
+> 1. Read `CurrentWork.md` completely — the task 31 entry now has the
+>    implementation details and the verification results.
+> 2. Pick one of the remaining items above (log spam, bar item visibility on
+>    Windows) and implement it.
+> 3. Check that the **Linux build** (`cmake -B build && cmake --build build`)
+>    is clean, and that the headless check still passes
 >    (`gcc -o /tmp/dockcheck /tmp/dockcheck.c src/dock.c src/dock_ui.c
 >    src/dock_font.c src/dock_metrics.c src/dirlist.c src/launcher.c
 >    src/platform_linux.c src/log.c src/fail.c -I src $(pkg-config --cflags
 >    --libs sdl2) -lX11 -lm && /tmp/dockcheck`).
-> 6. **Deploy the Windows build** with `./makeLinuxToWindow.sh` — it copies
->    the result to `/mnt/c/Users/mundh/OneDrive/Desktop/LivePaper-win64`,
->    which is the folder of the user.
-> 7. Update `CurrentWork.md`: the entry of the task 31, the *Status* table
->    and the *Next steps*, and commit the changes.
+> 4. Update `CurrentWork.md`: the entry, the *Status* table and the *Next
+>    steps*, and commit the changes.
 >
 > **The important rules of this project** (they are at the top of
 > `CurrentWork.md`): the log of the work is updated **before** the work starts

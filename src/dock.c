@@ -679,11 +679,21 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
             // The add button.
             if (DockAddButtonAt(dock, x, y)) {
                 LOG_INFO("the add button of the bar was clicked");
+#ifdef _WIN32
+                // The native file dialog of Windows is opened directly. It
+                // runs on its own thread and the chosen path is sent back
+                // with an SDL event, which the main loop handles by adding
+                // the chosen file or folder to the bar.
+                LauncherPickFile();
+#else
+                // On other systems the custom popup with the menu of the add
+                // button is used.
                 if (dock->popup_mode == DOCK_POPUP_ADD_MENU) {
                     DockClosePopup(dock);
                 } else {
                     DockOpenAddMenu(dock);
                 }
+#endif
                 break;
             }
 
