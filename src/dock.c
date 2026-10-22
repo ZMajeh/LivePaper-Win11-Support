@@ -6,6 +6,7 @@
 
 #include "dock_metrics.h"
 #include "dock_ui.h"
+#include "dock_font.h"
 #include "dirlist.h"
 #include "launcher.h"
 #include "log.h"
@@ -369,13 +370,64 @@ static int DockRowHeight(const struct Dock *dock) {
                                                     : DOCK_POPUP_ROW_HEIGHT;
 }
 
-// The size of the popup: it is as tall as the rows that are shown and as
-// wide as the text of the longest one.
+// Calculate the number of filtered/visible rows (matching search filter).
+static int DockFilteredRowCount(const struct Dock *dock) {
+    if (dock->popup_mode == DOCK_POPUP_ADD_MENU) {
+        return dock->row_count;
+    }
+    int count = 0;
+    for (int i = 0; i < dock->row_count; i++) {
+        if (RowMatchesSearch(dock, &dock->rows[i])) count++;
+    }
+    return count;
+}
+
+// Calculate the number of columns needed based on filtered rows.
+static int DockPopupColumns(const struct Dock *dock) {
+    if (dock->popup_mode == DOCK_POPUP_ADD_MENU) return 1;
+    int visible = DockFilteredRowCount(dock);
+    int cols = (visible + DOCK_POPUP_MAX_ROWS - 1) / DOCK_POPUP_MAX_ROWS;
+    if (cols > DOCK_POPUP_MAX_COLUMNS) cols = DOCK_POPUP_MAX_COLUMNS;
+    return cols > 0 ? cols : 1;
+}
+
+// Calculate the number of rows per column.
+static int DockRowsPerColumn(const struct Dock *dock) {
+    int visible = DockFilteredRowCount(dock);
+    int cols = DockPopupColumns(dock);
+    return cols > 0 ? (visible + cols - 1) / cols : 0;
+}
+
+// The size of the popup: calculates dynamic width and height based on columns.
 static void DockPopupSize(const struct Dock *dock, int *width, int *height) {
     int row_height = DockRowHeight(dock);
-    *height = DockVisibleRows(dock) * row_height;
-    // The width of the popup is fixed: the names of the files are cut.
-    *width = dock->popup_width;
+    int rows_per_col = DockRowsPerColumn(dock);
+    int cols = DockPopupColumns(dock);
+
+    *height = rows_per_col * row_height + (dock->popup_mode == DOCK_POPUP_FOLDER || dock->popup_mode == DOCK_POPUP_PICKER ? DOCK_POPUP_ROW_HEIGHT : 0);
+
+    // For folder/picker popups, calculate dynamic width based on content.
+    // For add menu, use fixed width.
+    if (dock->popup_mode == DOCK_POPUP_ADD_MENU) {
+        *width = DOCK_ADD_MENU_WIDTH;
+    } else {
+        // Calculate width based on longest label in filtered rows.
+        int max_label_width = 0;
+        int filtered = DockFilteredRowCount(dock);
+        int count = 0;
+        for (int i = 0; i < dock->row_count && count < filtered; i++) {
+            struct DockRow *row = &dock->rows[i];
+            if (!RowMatchesSearch(dock, &dock->rows[i])) continue;
+            if (!row->label) continue;
+            int label_width = FontTextWidth(row->label, 2) + 28; // icon + padding
+            if (label_width > max_label_width) max_label_width = label_width;
+            count++;
+        }
+        int col_width = max_label_width + 12; // padding
+        if (col_width < DOCK_POPUP_MIN_WIDTH) col_width = DOCK_POPUP_MIN_WIDTH;
+        if (col_width > DOCK_POPUP_MAX_WIDTH) col_width = DOCK_POPUP_MAX_WIDTH;
+        *width = col_width * cols;
+    }
 }
 
 // Creates the window of the popup. It is a window of its own, so that it
@@ -590,23 +642,45 @@ static int DockRowAt(const struct Dock *dock, int screen_x, int screen_y) {
         // Click in search field - we'll handle this separately
         return -2;
     }
-    
-    // When search is active, we need to map the clicked position to the
-    // correct original row index, accounting for filtered rows.
-    if (has_search && dock->popup_search && *dock->popup_search) {
-        int visible_index = (screen_y - dock->popup_y - search_height) / row_height;
-        int count = 0;
+
+    // For folder/picker popups with multi-column layout
+    if (dock->popup_mode == DOCK_POPUP_FOLDER || dock->popup_mode == DOCK_POPUP_PICKER) {
+        // Build filtered list of visible row indices
+        int visible_indices[DOCK_POPUP_MAX_ROWS * DOCK_POPUP_MAX_COLUMNS];
+        int visible_count = 0;
         for (int i = 0; i < dock->row_count; i++) {
-            struct DockRow *row = &dock->rows[i];
-            if (RowMatchesSearch(dock, row)) {
-                if (count == visible_index) return i;
-                count++;
+            if (RowMatchesSearch(dock, &dock->rows[i])) {
+                if (visible_count < (int)(sizeof(visible_indices)/sizeof(visible_indices[0]))) {
+                    visible_indices[visible_count++] = i;
+                }
             }
         }
-        return -1;
+        if (visible_count == 0) return -1;
+        
+        int cols = DockPopupColumns(dock);
+        int rows_per_col = DockRowsPerColumn(dock);
+        int row_height = DockRowHeight(dock);
+        int search_height = row_height; // folder/picker always has search
+        
+        int rel_y = screen_y - dock->popup_y - search_height;
+        if (rel_y < 0) return -1;
+        int row_in_col = rel_y / row_height;
+        if (row_in_col < 0) return -1;
+        if (row_in_col >= rows_per_col) return -1;
+        
+        int col_width = cols > 0 ? dock->popup_width / cols : dock->popup_width;
+        int rel_x = screen_x - dock->popup_x;
+        if (rel_x < 0 || rel_x >= dock->popup_width) return -1;
+        int col = rel_x / col_width;
+        if (col >= cols) col = cols - 1;
+        
+        int visible_index = col * rows_per_col + row_in_col;
+        if (visible_index >= visible_count) return -1;
+        return visible_indices[visible_index];
     }
-    
-    int index = dock->row_scroll + (screen_y - dock->popup_y - search_height) / row_height;
+
+    // For add menu (single column, no search)
+    int index = dock->row_scroll + (screen_y - dock->popup_y) / DockRowHeight(dock);
     if (index < 0 || index >= dock->row_count) return -1;
     return index;
 }

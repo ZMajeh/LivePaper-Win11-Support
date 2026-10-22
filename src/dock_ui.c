@@ -192,12 +192,39 @@ void DockUiDrawPopup(struct Dock *dock) {
     bool has_search = dock->popup_mode == DOCK_POPUP_FOLDER || dock->popup_mode == DOCK_POPUP_PICKER;
     int search_height = has_search ? DOCK_POPUP_ROW_HEIGHT : 0;
 
+    int cols = 1;
+    int rows_per_col = 0;
+    int visible_indices[DOCK_POPUP_MAX_ROWS * DOCK_POPUP_MAX_COLUMNS];
+    int visible_count = 0;
+    bool is_menu = dock->popup_mode == DOCK_POPUP_ADD_MENU;
+
+    // Build filtered list of rows matching search
+    for (int i = 0; i < dock->row_count; i++) {
+        struct DockRow *row = &dock->rows[i];
+        if (RowMatchesSearch(dock, row)) {
+            if (visible_count < (int)(sizeof(visible_indices)/sizeof(visible_indices[0]))) {
+                visible_indices[visible_count++] = i;
+            }
+        }
+    }
+
+    if (!is_menu) {
+        // Calculate columns based on visible rows
+        int visible = visible_count;
+        int cols_calc = (visible + DOCK_POPUP_MAX_ROWS - 1) / DOCK_POPUP_MAX_ROWS;
+        if (cols_calc > DOCK_POPUP_MAX_COLUMNS) cols_calc = DOCK_POPUP_MAX_COLUMNS;
+        cols = cols_calc > 0 ? cols_calc : 1;
+    } else {
+        cols = 1;
+    }
+    rows_per_col = cols > 0 ? (visible_count + cols - 1) / cols : 0;
+
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
     FillRect(renderer, 0, 0, dock->popup_width, dock->popup_height,
              COLOR_POPUP_R, COLOR_POPUP_G, COLOR_POPUP_B, 255);
 
-    // Draw the search field at the top
+    // Draw the search field at the top (spans all columns)
     if (has_search) {
         // Search field background
         FillRect(renderer, 2, 2, dock->popup_width - 4, search_height - 4,
@@ -218,39 +245,37 @@ void DockUiDrawPopup(struct Dock *dock) {
                      dock->popup_width - 16, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
     }
 
-    // Build a list of visible row indices (filtered by search)
-    int visible_indices[DOCK_POPUP_MAX_ROWS];
-    int visible_count = 0;
-    bool is_menu = dock->popup_mode == DOCK_POPUP_ADD_MENU;
-    for (int i = 0; i < dock->row_count && visible_count < DOCK_POPUP_MAX_ROWS; i++) {
-        struct DockRow *row = &dock->rows[i];
-        if (RowMatchesSearch(dock, row)) {
-            visible_indices[visible_count++] = i;
-        }
-    }
+    // Calculate column width
+    int col_width = cols > 0 ? dock->popup_width / cols : dock->popup_width;
 
-    for (int i = 0; i < visible_count; i++) {
-        int index = visible_indices[i];
-        struct DockRow *row = &dock->rows[index];
-        int row_y = search_height + i * row_height;
+    // Draw rows in columns
+    for (int col = 0; col < cols; col++) {
+        int col_x = col * col_width;
+        for (int row_in_col = 0; row_in_col < rows_per_col; row_in_col++) {
+            int index = col * rows_per_col + row_in_col;
+            if (index >= visible_count) break;
+            int idx = visible_indices[index];
+            struct DockRow *row = &dock->rows[idx];
+            int row_y = search_height + row_in_col * row_height;
 
-        if (index == dock->row_hover) {
-            FillRect(renderer, 0, row_y, dock->popup_width, row_height,
-                     COLOR_ACCENT_R, COLOR_ACCENT_G, COLOR_ACCENT_B, 150);
-        }
-
-        int text_y = row_y + (row_height - FONT_HEIGHT * FONT_SCALE) / 2;
-        // The rows of the menu of the add button have no icon.
-        int text_x = 8;
-        if (!is_menu) {
-            if (!row->is_up && !row->is_add_dir) {
-                DrawIcon(renderer, 6, row_y + 4, row->is_dir,
-                         COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+            // Draw hover highlight across the column
+            if (idx == dock->row_hover) {
+                FillRect(renderer, col_x, row_y, col_width, row_height,
+                         COLOR_ACCENT_R, COLOR_ACCENT_G, COLOR_ACCENT_B, 150);
             }
-            text_x = 22;
+
+            int text_y = row_y + (row_height - FONT_HEIGHT * FONT_SCALE) / 2;
+            int text_x = 8;
+            if (!is_menu) {
+                if (!row->is_up && !row->is_add_dir) {
+                    DrawIcon(renderer, col_x + 6, row_y + 4, row->is_dir,
+                             COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+                }
+                text_x = 22;
+            }
+            DrawRowLabel(renderer, row->label, col_x + text_x, text_y,
+                         col_width - text_x - 6, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
         }
-        DrawRowLabel(renderer, row->label, text_x, text_y,
-                     dock->popup_width - text_x - 6, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
     }
 
     SDL_RenderPresent(renderer);

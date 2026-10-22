@@ -82,8 +82,14 @@ struct DockRow {
 // The height of a row of the popup below the bar, in pixels.
 #define DOCK_POPUP_ROW_HEIGHT 20
 
-// The number of the rows of the popup that are shown at the same time.
+// The number of the rows of the popup that are shown at the same time in one column.
 #define DOCK_POPUP_MAX_ROWS 12
+
+// The minimum width of the popup, in pixels.
+#define DOCK_POPUP_MIN_WIDTH 240
+
+// The maximum width of the popup, in pixels.
+#define DOCK_POPUP_MAX_WIDTH 600
 
 // The width of the menu of the add button, in pixels. It has to be wide
 // enough for the longest text of the menu ("Add file or folder").
@@ -95,8 +101,11 @@ struct DockRow {
 // The x coordinate of the item with the given number.
 int DockItemX(int index);
 
-// The width of the popup below the bar.
+// The default width of the popup below the bar.
 #define DOCK_POPUP_WIDTH 240
+
+// The maximum number of columns for the popup.
+#define DOCK_POPUP_MAX_COLUMNS 4
 
 // The whole state of the bar.
 struct Dock {
