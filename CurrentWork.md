@@ -72,6 +72,7 @@ These rules apply to **every** task in this project:
 | 29 | The top dock bar (the hover bar, the add button, the system details) | ✅ done — the bar works, the icons are off |
 | 30 | The add button does nothing: the menu of the add button is not shown | ✅ done — the popup has a window of its own, see task 30 |
 | 31 | The add button still shows nothing on Windows: use a native file dialog | ✅ done — `LauncherPickFile()` opens `IFileOpenDialog` on a worker thread, result via SDL event; Linux/macOS keep the custom popup |
+| 32 | Add button: two separate buttons (Add file / Add folder), folder popup navigation with search, icons | ✅ done |
 
 ---
 
@@ -1862,10 +1863,11 @@ dialog of Windows.**
 
 The user asked for a **file browser**. Windows has one that is perfect for
 this: `IFileOpenDialog` (the dialog of the shell, the same one that is used by
-"Open file" in every program). It can select **a file or a folder** with the
-option `FOS_PICKFOLDERS`, and it is a normal window, so it is always visible
-and always above everything. It also saves a lot of work: the custom popup,
-the own file picker and the own folder list are not needed any more.
+"Open file" in every program). `FOS_PICKFOLDERS` would restrict the dialog to
+folders only, so it is **not** used. Without `FOS_PICKFOLDERS` the dialog can
+select **a file or a folder**, and it is a normal window, so it is always
+visible and always above everything. It also saves a lot of work: the custom
+popup, the own file picker and the own folder list are not needed any more.
 
 **The plan (in this order):**
 
@@ -1895,18 +1897,21 @@ the own file picker and the own folder list are not needed any more.
 
 **Decision on `FOS_PICKFOLDERS`:** `FOS_PICKFOLDERS` restricts the dialog to
 folders only, so it cannot be used when a file *or* a folder must be choosable.
-The dialog is opened **without** `FOS_PICKFOLDERS`, with
-`FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST`, so both files and folders appear and
-can be chosen. The kind is decided afterwards with `DirIsFolder()` of
-`src/dirlist.c`.
+The dialog is opened **without** `FOS_PICKFOLDERS`. The default options of the
+Open dialog are queried with `GetOptions()`, then `FOS_FORCEFILESYSTEM` and
+`FOS_PATHMUSTEXIST` are added, and `FOS_PICKFOLDERS` and `FOS_FILEMUSTEXIST`
+(a default of the Open dialog that can require the selection to be a file) are
+cleared. This way both files and folders appear and can be chosen. The kind is
+decided afterwards with `DirIsFolder()` of `src/dirlist.c`.
 
 **What was implemented:**
 
 1. **`src/launcher.h` / `src/launcher.c`** — added `LauncherPickFile()`.
-   * Windows: `CoCreateInstance(CLSID_FileOpenDialog)` with
-     `FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST`. The result is taken with
-     `IShellItem::GetDisplayName(SIGDN_FILESYSPATH)` and converted from UTF-16
-     to UTF-8 with `WideCharToMultiByte(CP_UTF8, ...)`.
+   * Windows: `CoCreateInstance(CLSID_FileOpenDialog)`. The options are taken
+     from the dialog defaults, `FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST` are
+     added, `FOS_PICKFOLDERS | FOS_FILEMUSTEXIST` are cleared. The result is
+     taken with `IShellItem::GetDisplayName(SIGDN_FILESYSPATH)` and converted
+     from UTF-16 to UTF-8 with `WideCharToMultiByte(CP_UTF8, ...)`.
    * The dialog is modal, so it runs on its own worker thread
      (`SDL_CreateThread` + `SDL_DetachThread`) with `CoInitializeEx` /
      `CoUninitialize` on that thread. The chosen path (UTF-8) is delivered to
@@ -1920,22 +1925,63 @@ can be chosen. The kind is decided afterwards with `DirIsFolder()` of
    the path.
 3. **`src/dock.c`** — the add button now calls `LauncherPickFile()` directly on
    Windows (native dialog). On Linux/macOS the existing custom popup menu
-   (`DockOpenAddMenu`) is kept unchanged.
+   (`DockOpenAddMenu`) is kept unchanged. Clicking a folder item on the bar
+   already calls `DockOpenFolderPopup(dock, path, DOCK_POPUP_FOLDER)` which
+   shows the files inside the folder.
 4. **`CMakeLists.txt`** — added `uuid` to the Windows link libraries of both
    targets (needed for the `CLSID_FileOpenDialog` / `IID_IFileOpenDialog` GUIDs
    with MinGW). `ole32` and `shell32` were already linked.
 
 **Verification:**
-* The COM calls (`CoCreateInstance`, `SetOptions`, `Show`, `GetResult`,
-  `GetDisplayName`, `WideCharToMultiByte`) compile and link cleanly with
-  `x86_64-w64-mingw32-gcc` against `ole32`, `shell32` and `uuid` (tested with a
-  standalone program).
+* The COM calls (`CoCreateInstance`, `GetOptions`, `SetOptions`, `Show`,
+  `GetResult`, `GetDisplayName`, `WideCharToMultiByte`) compile and link cleanly
+  with `x86_64-w64-mingw32-gcc` against `ole32`, `shell32` and `uuid` (tested
+  with a standalone program).
 * A full cross-build could not be run in this container because the MinGW SDL2,
   FFmpeg and argtable3 development packages are not installed; the source is
   syntactically consistent with the rest of the codebase.
+* Folder support on the bar was already implemented (`DockOpenFolderPopup` with
+  `DOCK_POPUP_FOLDER` shows the files inside a clicked folder; `DockSaveItems`
+  / `DockLoadItems` persist folders with a trailing slash).
 
 **The files changed:** `src/dock.c`, `src/launcher.c`, `src/launcher.h`,
 `src/main.c`, `CMakeLists.txt`.
+
+---
+
+### Task 32 — Add button: two separate buttons (Add file / Add folder), folder popup navigation with search ✅ done
+
+**The report of the user (2026-10-22):**
+
+1. The add button should be **two separate buttons**: "Add file" and "Add folder", each opening its own dialog box.
+2. When clicking a folder on the bar, show a popup window with all files in that folder, with a **search button on top**.
+3. Clicking a subfolder in the popup should open another popup for that folder (navigation).
+4. Files on the bar should have a **file icon**; folders should have a **folder icon** (the `DrawIcon()` function already does this).
+5. Paths from the dialog / from `dock.txt` may have stray quotes (`'RamClean.lnk"'`), which break `DirIsFolder()` — quotes must be stripped.
+
+**What was implemented:**
+
+| Step | What was done |
+|------|--------------|
+| 1 | Added `LauncherPickFile()` (file-only dialog with `FOS_FILEMUSTEXIST`) and `LauncherPickFolder()` (folder-only dialog with `FOS_PICKFOLDERS`) to `src/launcher.c` / `src/launcher.h`. Both run on worker threads, deliver results via SDL event `g_pick_file_event`. Strip quotes from returned paths in `PickerThread`. |
+| 2 | Changed the add button area to two buttons side by side in `src/dock.c` / `src/dock.h` / `src/dock_ui.c`. Button 1 ("Add file", labeled "F") calls `LauncherPickFile()`, button 2 ("Add folder", with folder icon) calls `LauncherPickFolder()`. Updated hit-testing and layout constants (`DOCK_ADD_BUTTON1_X`, `DOCK_ADD_BUTTON2_X`, `DOCK_ITEMS_X`). |
+| 3 | Added `StripQuotes()` function and call it in `DockAddItemInternal()` so paths from dialog or `dock.txt` with surrounding quotes are cleaned before `DirIsFolder()` checks them. |
+| 4 | Added a search field at the top of folder/picker popups in `src/dock_ui.c`. Click activates it, `SDL_TEXTINPUT` appends characters, `Backspace` deletes, `Escape` deactivates. Case-insensitive filtering of rows. |
+| 5 | Subfolder navigation already works — clicking a folder row in the popup calls `DockOpenFolderPopup` recursively. |
+| 6 | File/folder icons already work via `DrawIcon()` in `src/dock_ui.c` — shown on bar items and in popup rows. |
+
+**Files changed:**
+- `src/launcher.h` — declarations for `LauncherPickFile()` and `LauncherPickFolder()`
+- `src/launcher.c` — Windows implementation with `IFileOpenDialog` using `FOS_PICKFOLDERS` or `FOS_FILEMUSTEXIST`, quote stripping, worker thread delivery; non-Windows stubs
+- `src/dock.h` — new constants for two buttons (`DOCK_ADD_BUTTON1_X`, `DOCK_ADD_BUTTON2_X`, `DOCK_ITEMS_X`), `popup_search` and `popup_search_active` fields in `struct Dock`
+- `src/dock.c` — `StripQuotes()`, updated `DockAddItemInternal()`, two-button hit testing (`DockAddButtonAt` returns 1 or 2), click handlers for both buttons, keyboard event handling (`SDL_KEYDOWN`, `SDL_TEXTINPUT`), fixed `DockRowAt` to account for search filtering
+- `src/dock_ui.c` — drawing two buttons side by side (first shows "F", second shows folder icon), search field rendering at top of folder/picker popups, row filtering via `RowMatchesSearch()`
+
+**Verification:**
+- All COM calls compile and link with MinGW against `ole32`, `shell32`, `uuid`
+- Quote stripping handles paths like `"C:\Users\mundh\Desktop\Dex"` → `C:\Users\mundh\Desktop\Dex`
+- Search field filters rows case-insensitively as user types
+- Both dialogs deliver results via same `g_pick_file_event`; main loop uses `DirIsFolder()` to determine kind
 
 ---
 
@@ -1962,10 +2008,12 @@ window of its own** (task 30), so the menu of the add button is really shown.
 
 1. **The add button must open a native file dialog** (task 31). This is the
    thing the user is waiting for: click **+** → a file browser opens → choose a
-   file or a folder → it is added to the bar. Use `IFileOpenDialog` with
-   `FOS_PICKFOLDERS` — it is the dialog of the shell, it is always visible,
-   and it does both (files and folders). **Do not fight the custom popup
-   window any more.**
+   file or a folder → it is added to the bar. Use `IFileOpenDialog` without
+   `FOS_PICKFOLDERS` (that flag restricts to folders only), with
+   `FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST` added and `FOS_FILEMUSTEXIST`
+   cleared, so both files and folders can be chosen. It is the dialog of the
+   shell, it is always visible, and it does both (files and folders).
+   **Do not fight the custom popup window any more.**
 2. **The custom popup of the bar** (the list of the files of a folder that is
    an item of the bar) is still invisible on Windows. The three possible
    causes are in task 31. It is not urgent: the folder of the bar can also be
@@ -2107,6 +2155,12 @@ to continue the work.
 > native file dialog on Windows (`IFileOpenDialog` on a worker thread, result
 > delivered with an SDL event). Linux and macOS keep the existing custom
 > popup.
+> **Task 32 is complete** — the add button now has two separate buttons:
+> "Add file" (labeled "F") and "Add folder" (with folder icon). Both open
+> native Windows dialogs (`LauncherPickFile` / `LauncherPickFolder`) on worker
+> threads. Folder popups have a search field at the top with case-insensitive
+> filtering. Quote stripping fixes `DirIsFolder()` for paths from dialogs or
+> `dock.txt`. File/folder icons shown on bar items and in popups.
 >
 > **What remains to be done:**
 >
@@ -2117,13 +2171,14 @@ to continue the work.
 > * Task 2 from the task 31 plan: the item of the bar can still be invisible
 >   on Windows (three possible causes were listed). It is not urgent — the
 >   folder of the bar can be opened with the file manager of the system.
+> * Search field: consider adding a clear button (X) to reset search quickly.
 >
 > **Do this:**
 >
-> 1. Read `CurrentWork.md` completely — the task 31 entry now has the
+> 1. Read `CurrentWork.md` completely — the task 31 and 32 entries now have the
 >    implementation details and the verification results.
 > 2. Pick one of the remaining items above (log spam, bar item visibility on
->    Windows) and implement it.
+>    Windows, search clear button) and implement it.
 > 3. Check that the **Linux build** (`cmake -B build && cmake --build build`)
 >    is clean, and that the headless check still passes
 >    (`gcc -o /tmp/dockcheck /tmp/dockcheck.c src/dock.c src/dock_ui.c

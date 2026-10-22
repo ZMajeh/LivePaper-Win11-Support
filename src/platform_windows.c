@@ -91,6 +91,7 @@ static char config_file[MAX_PATH];
 // placed above the desktop, so that they get the mouse clicks.
 static SDL_Window *g_dock_window = NULL;
 static SDL_Window *g_dock_popup_window = NULL;
+static HWND g_wallpaper_hwnd = NULL;
 
 // Puts the bar of the dock directly above the window of the desktop. It is
 // defined below the function that creates the window of the bar.
@@ -957,6 +958,8 @@ bool PlatformAttachWallpaper(struct Context *context, int strategy) {
     // The children of the parent are printed after every strategy: it shows
     // exactly where the wallpaper window ended up, and what is drawn over it.
     if (LogGetLevel() >= LOG_LEVEL_DEBUG) DumpChildWindows(GetParent(sdl_hwnd));
+    // Store the wallpaper window HWND so that the dock popup can be placed above it.
+    g_wallpaper_hwnd = sdl_hwnd;
     return true;
 }
 
@@ -1106,9 +1109,33 @@ void PlatformSetDockVisible(SDL_Window *window, bool visible) {
 
 // Puts the window of the popup again in the right place of the z-order.
 // Showing a window can change its place, and the popup has to be above the
-// desktop, so that it gets the clicks of the mouse.
+// desktop (like the dock bar), so that it is visible and gets the clicks
+// of the mouse. We place it above the dock bar window, which is already
+// correctly positioned above the desktop.
 void PlatformPlaceDockPopupWindow(SDL_Window *window) {
     if (!window) return;
+
+    // Place the popup above the dock bar window, which is already correctly
+    // positioned above the desktop but below other applications.
+    if (g_dock_window) {
+        SDL_SysWMinfo info;
+        SDL_VERSION(&info.version);
+        if (SDL_GetWindowWMInfo(g_dock_window, &info)) {
+            HWND dock_hwnd = info.info.win.window;
+            SDL_SysWMinfo popup_info;
+            SDL_VERSION(&popup_info.version);
+            if (SDL_GetWindowWMInfo(window, &popup_info)) {
+                HWND popup_hwnd = popup_info.info.win.window;
+                // Place popup just above the dock bar in z-order
+                SetWindowPos(popup_hwnd, dock_hwnd, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                LOG_DEBUG("the dock popup was placed above the dock bar");
+                return;
+            }
+        }
+    }
+
+    // Fallback: place above desktop
     PlaceDockWindowAboveDesktop(window);
 }
 
@@ -1409,5 +1436,7 @@ void PlatformCleanup(struct Context *context) {
     if (context->window)
         SDL_DestroyWindow(context->window);
     context->window = NULL;
+    // The wallpaper window is destroyed, so clear the stored HWND.
+    g_wallpaper_hwnd = NULL;
     tray_exit();
 }

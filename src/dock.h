@@ -1,7 +1,10 @@
 #pragma once
 
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 #include <SDL.h>
 
 #include "dirlist.h"
@@ -59,11 +62,19 @@ struct DockRow {
 // The layout of the bar. The values are shared by the model (the hit
 // testing) and by the drawing, so that they cannot get out of sync.
 
-// The size of the add button, in pixels.
+// The size of an add button, in pixels.
 #define DOCK_ADD_BUTTON_SIZE 28
 
-// The distance of the add button from the left of the bar, in pixels.
-#define DOCK_ADD_BUTTON_X 8
+// The distance of the first add button ("Add file") from the left of the bar,
+// in pixels.
+#define DOCK_ADD_BUTTON1_X 8
+
+// The distance of the second add button ("Add folder") from the left of the
+// bar, in pixels.
+#define DOCK_ADD_BUTTON2_X (DOCK_ADD_BUTTON1_X + DOCK_ADD_BUTTON_SIZE + 4)
+
+// The distance of the items from the left of the bar, in pixels.
+#define DOCK_ITEMS_X (DOCK_ADD_BUTTON2_X + DOCK_ADD_BUTTON_SIZE + 8)
 
 // The width of an item of the bar, in pixels.
 #define DOCK_ITEM_WIDTH 120
@@ -114,6 +125,8 @@ struct Dock {
     SDL_Window *popup_window;     // the window of the popup
     SDL_Renderer *popup_renderer; // its renderer
     char *popup_folder;           // the folder that is shown
+    char *popup_search;           // the search text for filtering
+    bool popup_search_active;     // whether the search field has focus
     struct DockRow *rows;         // the rows of the popup
     int row_count;
     int row_hover;                // the row under the mouse
@@ -129,6 +142,27 @@ struct Dock {
     int trigger;                  // how many pixels at the top show the bar
     int timeout_ms;               // after how many ms the bar hides itself
 };
+
+// Checks if a row matches the search text. Case-insensitive substring match.
+// Must be after struct Dock definition so the type is complete.
+static inline bool RowMatchesSearch(const struct Dock *dock, const struct DockRow *row) {
+    if (!dock->popup_search || !*dock->popup_search) return true;
+    if (!row->label) return false;
+    // Case-insensitive search
+    char *label_lower = strdup(row->label);
+    char *search_lower = strdup(dock->popup_search);
+    if (!label_lower || !search_lower) {
+        if (label_lower) free(label_lower);
+        if (search_lower) free(search_lower);
+        return false;
+    }
+    for (char *p = label_lower; *p; p++) *p = tolower(*p);
+    for (char *p = search_lower; *p; p++) *p = tolower(*p);
+    bool match = strstr(label_lower, search_lower) != NULL;
+    free(label_lower);
+    free(search_lower);
+    return match;
+}
 
 // The options of the bar, that come from the command line.
 struct DockOptions {

@@ -29,17 +29,30 @@ extern Uint32 g_pick_file_event;
 
 // The data that is passed to the thread of the file picker dialog. It
 // contains the type of the SDL event that is used to deliver the result to
-// the main thread.
+// the main thread, and whether a file or a folder is to be chosen.
 struct PickerThreadData {
     Uint32 event_type;
+    bool pick_folder;
 };
+
+// Strips the surrounding double quotes from a path, in place. The native
+// dialog of Windows and the config file can produce paths that are wrapped
+// in quotes, which would break DirIsFolder() and the hit testing.
+static void StripQuotes(char *path) {
+    size_t length = strlen(path);
+    if (length >= 2 && path[0] == '"' && path[length - 1] == '"') {
+        memmove(path, path + 1, length - 2);
+        path[length - 2] = '\0';
+    }
+}
 
 // Runs the native file picker dialog of Windows on its own thread, so that
 // the program keeps running while the dialog is open. When the user chooses
 // a file or a folder, its path (UTF-8) is sent back to the main thread with
 // an SDL event. When the user cancels the dialog, no event is sent.
-// FOS_PICKFOLDERS is deliberately not used: it would restrict the dialog to
-// folders only. Without it both files and folders can be chosen.
+// When pick_folder is true, FOS_PICKFOLDERS is set so that only folders can
+// be chosen. When pick_folder is false, FOS_FILEMUSTEXIST is set so that
+// only files can be chosen.
 static int PickerThread(void *data) {
     struct PickerThreadData *thread_data = (struct PickerThreadData *)data;
     char *path = NULL;
@@ -49,9 +62,21 @@ static int PickerThread(void *data) {
         HRESULT hr = CoCreateInstance(&CLSID_FileOpenDialog, NULL, CLSCTX_ALL,
                                       &IID_IFileOpenDialog, (void **)&dialog);
         if (SUCCEEDED(hr)) {
-            // Both files and folders can be chosen.
-            DWORD options = FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST;
-            dialog->lpVtbl->SetOptions(dialog, options);
+            // Start from the default options, add FOS_FORCEFILESYSTEM and
+            // FOS_PATHMUSTEXIST, then either set FOS_PICKFOLDERS (folders
+            // only) or keep FOS_FILEMUSTEXIST (files only).
+            DWORD options = 0;
+            if (SUCCEEDED(dialog->lpVtbl->GetOptions(dialog, &options))) {
+                options |= FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST;
+                if (thread_data->pick_folder) {
+                    options |= FOS_PICKFOLDERS;
+                    options &= ~FOS_FILEMUSTEXIST;
+                } else {
+                    options &= ~FOS_PICKFOLDERS;
+                    options |= FOS_FILEMUSTEXIST;
+                }
+                dialog->lpVtbl->SetOptions(dialog, options);
+            }
 
             hr = dialog->lpVtbl->Show(dialog, NULL);
             if (SUCCEEDED(hr)) {
@@ -70,6 +95,7 @@ static int PickerThread(void *data) {
                             if (path) {
                                 WideCharToMultiByte(CP_UTF8, 0, wide_path, -1,
                                                     path, length, NULL, NULL);
+                                StripQuotes(path);
                             }
                         }
                         CoTaskMemFree(wide_path);
@@ -100,8 +126,27 @@ char *LauncherPickFile(void) {
         sizeof(*thread_data));
     if (!thread_data) return NULL;
     thread_data->event_type = g_pick_file_event;
+    thread_data->pick_folder = false;
 
     SDL_Thread *thread = SDL_CreateThread(PickerThread, "file-picker",
+                                          thread_data);
+    if (!thread) {
+        free(thread_data);
+        return NULL;
+    }
+    SDL_DetachThread(thread);
+    // The result is delivered asynchronously with an SDL event.
+    return NULL;
+}
+
+char *LauncherPickFolder(void) {
+    struct PickerThreadData *thread_data = (struct PickerThreadData *)malloc(
+        sizeof(*thread_data));
+    if (!thread_data) return NULL;
+    thread_data->event_type = g_pick_file_event;
+    thread_data->pick_folder = true;
+
+    SDL_Thread *thread = SDL_CreateThread(PickerThread, "folder-picker",
                                           thread_data);
     if (!thread) {
         free(thread_data);
@@ -160,6 +205,11 @@ char *LauncherHomeFolder(void) {
 
 char *LauncherPickFile(void) {
     LOG_INFO("the native file picker is not available on this platform");
+    return NULL;
+}
+
+char *LauncherPickFolder(void) {
+    LOG_INFO("the native folder picker is not available on this platform");
     return NULL;
 }
 

@@ -36,13 +36,35 @@ static int BarWidth(struct Dock *dock) {
     return dock->screen_width;
 }
 
+// Strips the surrounding double quotes from a path, in place. The native
+// dialog of Windows and the config file can produce paths that are wrapped
+// in quotes, which would break DirIsFolder() and the hit testing.
+static void StripQuotes(char *path) {
+    size_t length = strlen(path);
+    if (length >= 2 && path[0] == '"' && path[length - 1] == '"') {
+        memmove(path, path + 1, length - 2);
+        path[length - 2] = '\0';
+    }
+}
+
 // Adds an item to the bar. The label is the name of the file or of the
 // folder, without the path.
 static void DockAddItemInternal(struct Dock *dock, const char *path, enum DockItemKind kind) {
+    // Strip surrounding quotes from the path, in case it was loaded from
+    // dock.txt or returned by the native dialog with quotes around it.
+    char *clean = strdup(path);
+    bool have_clean = clean != NULL;
+    if (have_clean) {
+        StripQuotes(clean);
+        path = clean;
+    }
     if (dock->item_count >= dock->item_capacity) {
         int capacity = dock->item_capacity ? dock->item_capacity * 2 : 8;
         struct DockItem *items = realloc(dock->items, sizeof(struct DockItem) * capacity);
-        if (!items) return;
+        if (!items) {
+            if (have_clean) free(clean);
+            return;
+        }
         dock->items = items;
         dock->item_capacity = capacity;
     }
@@ -53,10 +75,12 @@ static void DockAddItemInternal(struct Dock *dock, const char *path, enum DockIt
     if (!item->path || !item->label) {
         free(item->path);
         free(item->label);
+        if (have_clean) free(clean);
         return;
     }
     dock->item_count++;
     LOG_INFO("the item '%s' was added to the bar", item->label);
+    if (have_clean) free(clean);
 }
 
 // Closes the popup and frees the rows of it.
@@ -76,6 +100,11 @@ static void DockClosePopup(struct Dock *dock) {
         free(dock->popup_folder);
         dock->popup_folder = NULL;
     }
+    if (dock->popup_search) {
+        free(dock->popup_search);
+        dock->popup_search = NULL;
+    }
+    dock->popup_search_active = false;
     // The window of the popup is not needed any more.
     DockHidePopupWindow(dock);
 }
@@ -126,8 +155,10 @@ void DockOpenFolderPopup(struct Dock *dock, const char *path, enum DockPopupMode
     DockAddRow(dock, "Add this folder", path, true, false, true);
 
     dock->popup_folder = strdup(path);
+    dock->popup_search = strdup("");
+    dock->popup_search_active = false;
     dock->popup_mode = mode;
-    dock->popup_x = DOCK_ADD_BUTTON_X;
+    dock->popup_x = DOCK_ADD_BUTTON1_X;
     dock->popup_width = DOCK_POPUP_WIDTH;
     dock->row_hover = -1;
     dock->row_scroll = 0;
@@ -142,7 +173,7 @@ void DockOpenAddMenu(struct Dock *dock) {
     DockAddRow(dock, "File browser", NULL, false, false, false);
     DockAddRow(dock, "Add file or folder", NULL, false, false, false);
     dock->popup_mode = DOCK_POPUP_ADD_MENU;
-    dock->popup_x = DOCK_ADD_BUTTON_X;
+    dock->popup_x = DOCK_ADD_BUTTON1_X;
     dock->popup_width = DOCK_ADD_MENU_WIDTH;
     dock->row_hover = -1;
     dock->row_scroll = 0;
@@ -384,7 +415,7 @@ static void DockShowPopup(struct Dock *dock) {
         SDL_SetWindowSize(dock->popup_window, width, height);
     }
     // The popup hangs below the bar.
-    dock->popup_x = DOCK_ADD_BUTTON_X;
+    dock->popup_x = DOCK_ADD_BUTTON1_X;
     dock->popup_y = dock->window_y + dock->height;
     PlatformSetDockPosition(dock->popup_window, dock->popup_x, dock->popup_y);
     PlatformSetDockVisible(dock->popup_window, true);
@@ -540,7 +571,7 @@ void DockDraw(struct Context *context, struct Dock *dock) {
 // The x coordinate of the item with the given number. The items of the bar
 // start after the add button.
 int DockItemX(int index) {
-    return DOCK_ADD_BUTTON_X + DOCK_ADD_BUTTON_SIZE + 8 + index * DOCK_ITEM_WIDTH;
+    return DOCK_ITEMS_X + index * DOCK_ITEM_WIDTH;
 }
 
 // The row of the popup that is under the mouse, or -1. The position is the
@@ -549,7 +580,33 @@ static int DockRowAt(const struct Dock *dock, int screen_x, int screen_y) {
     if (dock->popup_mode == DOCK_POPUP_NONE) return -1;
     if (screen_y < dock->popup_y || screen_y >= dock->popup_y + dock->popup_height) return -1;
     if (screen_x < dock->popup_x || screen_x >= dock->popup_x + dock->popup_width) return -1;
-    int index = dock->row_scroll + (screen_y - dock->popup_y) / DockRowHeight(dock);
+    
+    int row_height = DockRowHeight(dock);
+    bool has_search = dock->popup_mode == DOCK_POPUP_FOLDER || dock->popup_mode == DOCK_POPUP_PICKER;
+    int search_height = has_search ? row_height : 0;
+    
+    // Check if click is in the search field
+    if (has_search && screen_y < dock->popup_y + search_height) {
+        // Click in search field - we'll handle this separately
+        return -2;
+    }
+    
+    // When search is active, we need to map the clicked position to the
+    // correct original row index, accounting for filtered rows.
+    if (has_search && dock->popup_search && *dock->popup_search) {
+        int visible_index = (screen_y - dock->popup_y - search_height) / row_height;
+        int count = 0;
+        for (int i = 0; i < dock->row_count; i++) {
+            struct DockRow *row = &dock->rows[i];
+            if (RowMatchesSearch(dock, row)) {
+                if (count == visible_index) return i;
+                count++;
+            }
+        }
+        return -1;
+    }
+    
+    int index = dock->row_scroll + (screen_y - dock->popup_y - search_height) / row_height;
     if (index < 0 || index >= dock->row_count) return -1;
     return index;
 }
@@ -557,17 +614,20 @@ static int DockRowAt(const struct Dock *dock, int screen_x, int screen_y) {
 // The item of the bar that is under the mouse, or -1.
 static int DockItemAt(const struct Dock *dock, int x, int y) {
     if (y < 0 || y >= dock->height) return -1;
-    int items_x = DOCK_ADD_BUTTON_X + DOCK_ADD_BUTTON_SIZE + 8;
-    if (x < items_x) return -1;
-    int index = (x - items_x) / DOCK_ITEM_WIDTH;
+    if (x < DOCK_ITEMS_X) return -1;
+    int index = (x - DOCK_ITEMS_X) / DOCK_ITEM_WIDTH;
     if (index < 0 || index >= dock->item_count) return -1;
     return index;
 }
 
 // Whether the add button is under the mouse.
-static bool DockAddButtonAt(const struct Dock *dock, int x, int y) {
-    if (y < 0 || y >= dock->height) return false;
-    return x >= DOCK_ADD_BUTTON_X && x < DOCK_ADD_BUTTON_X + DOCK_ADD_BUTTON_SIZE;
+// Whether an add button is under the mouse. Returns 0 for none, 1 for the
+// "Add file" button, 2 for the "Add folder" button.
+static int DockAddButtonAt(const struct Dock *dock, int x, int y) {
+    if (y < 0 || y >= dock->height) return 0;
+    if (x >= DOCK_ADD_BUTTON1_X && x < DOCK_ADD_BUTTON1_X + DOCK_ADD_BUTTON_SIZE) return 1;
+    if (x >= DOCK_ADD_BUTTON2_X && x < DOCK_ADD_BUTTON2_X + DOCK_ADD_BUTTON_SIZE) return 2;
+    return 0;
 }
 
 // The row of the popup that was clicked.
@@ -615,12 +675,10 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
         return;
     }
 
-    // The mouse events of SDL carry the window that has the mouse focus, and
-    // not the window that was clicked. The bar of the dock never has the
-    // focus (it is a WS_EX_NOACTIVATE window), so the events cannot be
-    // filtered by the window: the position of the mouse decides instead.
+    // Allow keyboard events when the search field is active
+    bool handle_keyboard = dock->popup_search_active;
     if (event->type != SDL_MOUSEMOTION && event->type != SDL_MOUSEBUTTONDOWN &&
-        event->type != SDL_MOUSEWHEEL) {
+        event->type != SDL_MOUSEWHEEL && !handle_keyboard) {
         return;
     }
     // The position of the mouse on the screen, which is asked for from the
@@ -642,6 +700,35 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
             dock->row_hover = DockRowAt(dock, screen_x, screen_y);
             break;
 
+        case SDL_KEYDOWN:
+            if (!dock->popup_search_active) break;
+            if (event->key.keysym.sym == SDLK_ESCAPE) {
+                dock->popup_search_active = false;
+                break;
+            }
+            if (event->key.keysym.sym == SDLK_BACKSPACE && dock->popup_search) {
+                size_t len = strlen(dock->popup_search);
+                if (len > 0) {
+                    dock->popup_search[len - 1] = '\0';
+                    dock->row_scroll = 0;
+                    dock->row_hover = -1;
+                }
+            }
+            break;
+
+        case SDL_TEXTINPUT:
+            if (!dock->popup_search_active) break;
+            if (dock->popup_search) {
+                size_t len = strlen(dock->popup_search);
+                size_t add_len = strlen(event->text.text);
+                if (len + add_len < 255) {
+                    strcat(dock->popup_search, event->text.text);
+                    dock->row_scroll = 0;
+                    dock->row_hover = -1;
+                }
+            }
+            break;
+
         case SDL_MOUSEBUTTONDOWN: {
             if (event->button.button != SDL_BUTTON_LEFT) break;
             dock->last_input_ms = SDL_GetTicks64();
@@ -653,9 +740,22 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
                 break;
             }
 
+            // Click in search field deactivates it if clicking elsewhere
+            if (dock->popup_search_active) {
+                int row = DockRowAt(dock, screen_x, screen_y);
+                if (row != -2) {
+                    dock->popup_search_active = false;
+                }
+            }
+
             // The rows of the popup. The menu of the add button is a popup
             // as well, so it is handled here too.
             int row = DockRowAt(dock, screen_x, screen_y);
+            if (row == -2) {
+                // Click in the search field - activate it
+                dock->popup_search_active = true;
+                break;
+            }
             if (row >= 0) {
                 if (dock->popup_mode == DOCK_POPUP_ADD_MENU) {
                     if (row == 0) {
@@ -676,15 +776,20 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
                 break;
             }
 
-            // The add button.
-            if (DockAddButtonAt(dock, x, y)) {
-                LOG_INFO("the add button of the bar was clicked");
+            // The add buttons: "Add file" and "Add folder".
+            int button = DockAddButtonAt(dock, x, y);
+            if (button != 0) {
+                LOG_INFO("the add button %d of the bar was clicked", button);
 #ifdef _WIN32
-                // The native file dialog of Windows is opened directly. It
-                // runs on its own thread and the chosen path is sent back
-                // with an SDL event, which the main loop handles by adding
-                // the chosen file or folder to the bar.
-                LauncherPickFile();
+                // The native dialog of Windows is opened directly. It runs
+                // on its own thread and the chosen path is sent back with
+                // an SDL event, which the main loop handles by adding the
+                // chosen file or folder to the bar.
+                if (button == 1) {
+                    LauncherPickFile();
+                } else {
+                    LauncherPickFolder();
+                }
 #else
                 // On other systems the custom popup with the menu of the add
                 // button is used.

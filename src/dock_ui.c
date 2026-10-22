@@ -1,5 +1,6 @@
 #include "dock_ui.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -144,22 +145,39 @@ static void DrawSystemDetails(SDL_Renderer *renderer, const struct Dock *dock) {
 
 // Draws the add button: a square with a cross in it.
 static void DrawAddButton(SDL_Renderer *renderer, const struct Dock *dock) {
-    int x = DOCK_ADD_BUTTON_X;
     int y = (dock->height - DOCK_ADD_BUTTON_SIZE) / 2;
-    bool hovered = dock->mouse_x >= x && dock->mouse_x < x + DOCK_ADD_BUTTON_SIZE
-                   && dock->mouse_y >= y && dock->mouse_y < y + DOCK_ADD_BUTTON_SIZE;
-    uint8_t r = hovered ? COLOR_ACCENT_R : COLOR_TEXT_R;
-    uint8_t g = hovered ? COLOR_ACCENT_G : COLOR_TEXT_G;
-    uint8_t b = hovered ? COLOR_ACCENT_B : COLOR_TEXT_B;
-
+    
+    // Button 1: "Add file"
+    int x1 = DOCK_ADD_BUTTON1_X;
+    bool hovered1 = dock->mouse_x >= x1 && dock->mouse_x < x1 + DOCK_ADD_BUTTON_SIZE
+                    && dock->mouse_y >= y && dock->mouse_y < y + DOCK_ADD_BUTTON_SIZE;
+    uint8_t r1 = hovered1 ? COLOR_ACCENT_R : COLOR_TEXT_R;
+    uint8_t g1 = hovered1 ? COLOR_ACCENT_G : COLOR_TEXT_G;
+    uint8_t b1 = hovered1 ? COLOR_ACCENT_B : COLOR_TEXT_B;
+    
     // The frame of the button.
-    FillRect(renderer, x, y, DOCK_ADD_BUTTON_SIZE, 1, r, g, b, 255);
-    FillRect(renderer, x, y + DOCK_ADD_BUTTON_SIZE - 1, DOCK_ADD_BUTTON_SIZE, 1, r, g, b, 255);
-    FillRect(renderer, x, y, 1, DOCK_ADD_BUTTON_SIZE, r, g, b, 255);
-    FillRect(renderer, x + DOCK_ADD_BUTTON_SIZE - 1, y, 1, DOCK_ADD_BUTTON_SIZE, r, g, b, 255);
-    // The cross in the middle.
-    FillRect(renderer, x + 7, y + 13, 14, 2, r, g, b, 255);
-    FillRect(renderer, x + 13, y + 7, 2, 14, r, g, b, 255);
+    FillRect(renderer, x1, y, DOCK_ADD_BUTTON_SIZE, 1, r1, g1, b1, 255);
+    FillRect(renderer, x1, y + DOCK_ADD_BUTTON_SIZE - 1, DOCK_ADD_BUTTON_SIZE, 1, r1, g1, b1, 255);
+    FillRect(renderer, x1, y, 1, DOCK_ADD_BUTTON_SIZE, r1, g1, b1, 255);
+    FillRect(renderer, x1 + DOCK_ADD_BUTTON_SIZE - 1, y, 1, DOCK_ADD_BUTTON_SIZE, r1, g1, b1, 255);
+    // The "F" for file.
+    DrawItemLabel(renderer, "F", x1 + 8, y + 4, r1, g1, b1);
+    
+    // Button 2: "Add folder"
+    int x2 = DOCK_ADD_BUTTON2_X;
+    bool hovered2 = dock->mouse_x >= x2 && dock->mouse_x < x2 + DOCK_ADD_BUTTON_SIZE
+                    && dock->mouse_y >= y && dock->mouse_y < y + DOCK_ADD_BUTTON_SIZE;
+    uint8_t r2 = hovered2 ? COLOR_ACCENT_R : COLOR_TEXT_R;
+    uint8_t g2 = hovered2 ? COLOR_ACCENT_G : COLOR_TEXT_G;
+    uint8_t b2 = hovered2 ? COLOR_ACCENT_B : COLOR_TEXT_B;
+    
+    // The frame of the button.
+    FillRect(renderer, x2, y, DOCK_ADD_BUTTON_SIZE, 1, r2, g2, b2, 255);
+    FillRect(renderer, x2, y + DOCK_ADD_BUTTON_SIZE - 1, DOCK_ADD_BUTTON_SIZE, 1, r2, g2, b2, 255);
+    FillRect(renderer, x2, y, 1, DOCK_ADD_BUTTON_SIZE, r2, g2, b2, 255);
+    FillRect(renderer, x2 + DOCK_ADD_BUTTON_SIZE - 1, y, 1, DOCK_ADD_BUTTON_SIZE, r2, g2, b2, 255);
+    // The folder icon.
+    DrawIcon(renderer, x2 + 8, y + 4, true, r2, g2, b2);
 }
 
 // Draws the popup below the bar: the menu of the add button or the list of
@@ -170,18 +188,51 @@ void DockUiDrawPopup(struct Dock *dock) {
     int row_height = dock->popup_mode == DOCK_POPUP_ADD_MENU ? DOCK_ADD_MENU_ROW_HEIGHT
                                                             : DOCK_POPUP_ROW_HEIGHT;
 
+    // For folder popups, we have a search field at the top
+    bool has_search = dock->popup_mode == DOCK_POPUP_FOLDER || dock->popup_mode == DOCK_POPUP_PICKER;
+    int search_height = has_search ? DOCK_POPUP_ROW_HEIGHT : 0;
+
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
     FillRect(renderer, 0, 0, dock->popup_width, dock->popup_height,
              COLOR_POPUP_R, COLOR_POPUP_G, COLOR_POPUP_B, 255);
 
-    int rows = DockUiVisibleRows(dock);
+    // Draw the search field at the top
+    if (has_search) {
+        // Search field background
+        FillRect(renderer, 2, 2, dock->popup_width - 4, search_height - 4,
+                 COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B, 60);
+        // Search field border (highlight if active)
+        uint8_t br = dock->popup_search_active ? COLOR_ACCENT_R : COLOR_TEXT_R;
+        uint8_t bg = dock->popup_search_active ? COLOR_ACCENT_G : COLOR_TEXT_G;
+        uint8_t bb = dock->popup_search_active ? COLOR_ACCENT_B : COLOR_TEXT_B;
+        FillRect(renderer, 2, 2, dock->popup_width - 4, 1, br, bg, bb, 255);
+        FillRect(renderer, 2, search_height - 3, dock->popup_width - 4, 1, br, bg, bb, 255);
+        FillRect(renderer, 2, 2, 1, search_height - 4, br, bg, bb, 255);
+        FillRect(renderer, dock->popup_width - 3, 2, 1, search_height - 4, br, bg, bb, 255);
+        // Search text
+        int text_y = 2 + (search_height - FONT_HEIGHT * FONT_SCALE) / 2;
+        char search_label[256];
+        snprintf(search_label, sizeof(search_label), "Search: %s", dock->popup_search ? dock->popup_search : "");
+        DrawRowLabel(renderer, search_label, 10, text_y,
+                     dock->popup_width - 16, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+    }
+
+    // Build a list of visible row indices (filtered by search)
+    int visible_indices[DOCK_POPUP_MAX_ROWS];
+    int visible_count = 0;
     bool is_menu = dock->popup_mode == DOCK_POPUP_ADD_MENU;
-    for (int i = 0; i < rows; i++) {
-        int index = dock->row_scroll + i;
-        if (index >= dock->row_count) break;
+    for (int i = 0; i < dock->row_count && visible_count < DOCK_POPUP_MAX_ROWS; i++) {
+        struct DockRow *row = &dock->rows[i];
+        if (RowMatchesSearch(dock, row)) {
+            visible_indices[visible_count++] = i;
+        }
+    }
+
+    for (int i = 0; i < visible_count; i++) {
+        int index = visible_indices[i];
         struct DockRow *row = &dock->rows[index];
-        int row_y = i * row_height;
+        int row_y = search_height + i * row_height;
 
         if (index == dock->row_hover) {
             FillRect(renderer, 0, row_y, dock->popup_width, row_height,
