@@ -32,7 +32,7 @@ static char* OpenVideoFile();
 
 // The items of the menu of the tray icon and the tray itself. They are
 // defined below, but the switch of the dock bar needs them.
-static struct tray_menu g_tray_menu_items[];
+static struct tray_menu g_tray_menu_items[7];
 static struct tray tray;
 
 static void TrayQuit(struct tray_menu *item) {

@@ -33,7 +33,11 @@ static int CompareEntries(const void *a, const void *b) {
     if (first->is_dir != second->is_dir) {
         return first->is_dir ? -1 : 1;
     }
+#ifdef _WIN32
+    return _stricmp(first->name, second->name);
+#else
     return strcasecmp(first->name, second->name);
+#endif
 }
 
 // Adds an entry to the list. The list is grown when it is full.
