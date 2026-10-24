@@ -30,9 +30,9 @@ Note that if LivePaper quits due to an error, the remembered wallpaper file will
 
 ### Tray icon menu
 
-The tray icon in the notification area provides quick access to LivePaper's controls:
+The tray icon in the notification area (system tray) provides quick access to LivePaper's controls:
 
-![Tray menu](assets/taskbar_menu.png)
+![Tray menu](assets/tray_menu.png)
 
 * **Dock bar** — A checkable item that toggles the dock bar on/off. When checked (default), the bar is visible and slides down on mouse hover. Uncheck it to hide the bar completely; check it again to restore it. This is equivalent to the `--no-dock` command-line option.
 * **Set wallpaper...** — Opens a file dialog to choose a new video/GIF wallpaper.
@@ -57,9 +57,22 @@ The bar has two **add buttons** on the left (labeled "F" for *Add file* and a fo
 ![Folder popup with multi-column layout and search](assets/popup_for_folder.png)
 
 * The **items** of the bar are remembered between runs, in the file `dock.txt` next to the other settings of the program.
-* The **details** on the right are sampled once per second, so that the program stays quiet. This includes CPU load, **RAM usage**, network speed, disk activity, and the current time.
+* The **details** on the right are sampled once per second, so that the program stays quiet. This shows LivePaper's own:
+  * **CPU load** — percentage of processor time used by LivePaper
+  * **RAM usage** — memory used by the LivePaper process
+  * **Network speed** — upload and download rates
+  * **Disk activity** — I/O load
+  * **Current time** — system clock
 
-![System details showing RAM usage](assets/ram_use_space.png)
+![System details showing LivePaper's own CPU/RAM/network/disk stats](assets/ram_use_space.png)
+
+### App size and resource usage
+
+LivePaper is designed to be lightweight:
+* **Installer size** — ~47 MB (MSI) / ~47 MB (portable ZIP)
+* **RAM usage** — typically ~20 MB while running
+* **CPU usage** — minimal when idle, scales with wallpaper complexity
+* **No background services** — runs only when you're logged in
 
 The bar can be switched off and on again with the item *Dock bar* of the tray
 menu, or with the option `--no-dock` when the program is started.
