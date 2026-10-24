@@ -20,7 +20,6 @@ You can also build it locally from source. Instructions are [here](#build).
 ## Usage
 ### Windows
 Simply run live-paper.exe. On its first run, LivePaper will open a window to choose the wallpaper file. The app will remember this file and play it the next time you run LivePaper. You can also change the wallpaper file or quit the app via the tray icon.  
-![Close with tray icon](assets/tray.png)
 
 Note that if LivePaper quits due to an error, the remembered wallpaper file will be cleared. The next time the app is started, you will need to choose the wallpaper file again.
 
