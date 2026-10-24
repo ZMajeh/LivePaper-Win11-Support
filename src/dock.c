@@ -97,15 +97,11 @@ static void DockClosePopup(struct Dock *dock) {
     dock->row_hover = -1;
     dock->row_scroll = 0;
     dock->popup_height = 0;
+    dock->popup_placed = false;
     if (dock->popup_folder) {
         free(dock->popup_folder);
         dock->popup_folder = NULL;
     }
-    if (dock->popup_search) {
-        free(dock->popup_search);
-        dock->popup_search = NULL;
-    }
-    dock->popup_search_active = false;
     // The window of the popup is not needed any more.
     DockHidePopupWindow(dock);
 }
@@ -129,42 +125,45 @@ static void DockAddRow(struct Dock *dock, const char *label, const char *path,
 // Shows the content of the given folder in the popup. The first row goes to
 // the parent folder, the last one adds the folder itself.
 void DockOpenFolderPopup(struct Dock *dock, const char *path, enum DockPopupMode mode) {
+    // Save the path before DockClosePopup frees dock->rows
+    char *saved_path = strdup(path);
+    if (!saved_path) return;
+    
     DockClosePopup(dock);
 
     struct DirEntry *entries = NULL;
-    int count = DirListRead(path, &entries);
+    int count = DirListRead(saved_path, &entries);
     if (count < 0) {
-        LOG_WARN("the files of the folder '%s' could not be shown", path);
+        LOG_WARN("the files of the folder '%s' could not be shown", saved_path);
+        free(saved_path);
         return;
     }
 
     // The row that goes to the parent folder.
-    char *parent = DirParentPath(path);
-    if (parent && strcmp(parent, path) != 0) {
+    char *parent = DirParentPath(saved_path);
+    if (parent && strcmp(parent, saved_path) != 0) {
         DockAddRow(dock, "..", parent, true, true, false);
     }
     free(parent);
 
     for (int i = 0; i < count; i++) {
-        char *full = DirJoinPath(path, entries[i].name);
+        char *full = DirJoinPath(saved_path, entries[i].name);
         DockAddRow(dock, entries[i].name, full, entries[i].is_dir, false, false);
         free(full);
     }
     DirListFree(entries, count);
 
     // The row that adds the folder itself.
-    DockAddRow(dock, "Add this folder", path, true, false, true);
+    DockAddRow(dock, "Add this folder", saved_path, true, false, true);
 
-    dock->popup_folder = strdup(path);
-    dock->popup_search = strdup("");
-    dock->popup_search_active = false;
+    dock->popup_folder = saved_path;
     dock->popup_mode = mode;
     dock->popup_x = DOCK_ADD_BUTTON1_X;
     dock->popup_width = DOCK_POPUP_WIDTH;
     dock->row_hover = -1;
     dock->row_scroll = 0;
     DockShowPopup(dock);
-    LOG_INFO("the popup of the folder '%s' was opened", path);
+    LOG_INFO("the popup of the folder '%s' was opened", saved_path);
 }
 
 // Shows the menu of the add button. The two options are rows of the popup, so
@@ -357,10 +356,26 @@ bool DockIsEnabled(const struct Dock *dock) {
 // ---------------------------------------------------------------------------
 // The state machine
 // ---------------------------------------------------------------------------
+// Computes the maximum rows per column that fit on screen.
+// The dock bar is at the top, popup hangs below it.
+int DockMaxPopupRows(const struct Dock *dock) {
+    int available = dock->screen_height - dock->height;
+    if (available < 0) available = 0;
+    // Leave some margin at bottom (e.g., 40px for taskbar, etc.)
+    available -= 40;
+    if (available < 0) available = 0;
+    int rows = available / DOCK_POPUP_ROW_HEIGHT;
+    // Cap at a reasonable maximum for performance/UI
+    if (rows > 48) rows = 48;
+    return rows;
+}
+
+// ---------------------------------------------------------------------------
 // The number of the rows of the popup that are shown.
 static int DockVisibleRows(const struct Dock *dock) {
     int rows = dock->row_count;
-    if (rows > DOCK_POPUP_MAX_ROWS) rows = DOCK_POPUP_MAX_ROWS;
+    int max_rows = DockMaxPopupRows(dock);
+    if (rows > max_rows) rows = max_rows;
     return rows;
 }
 
@@ -370,23 +385,17 @@ static int DockRowHeight(const struct Dock *dock) {
                                                     : DOCK_POPUP_ROW_HEIGHT;
 }
 
-// Calculate the number of filtered/visible rows (matching search filter).
+// Calculate the number of visible rows (no search filter anymore).
 static int DockFilteredRowCount(const struct Dock *dock) {
-    if (dock->popup_mode == DOCK_POPUP_ADD_MENU) {
-        return dock->row_count;
-    }
-    int count = 0;
-    for (int i = 0; i < dock->row_count; i++) {
-        if (RowMatchesSearch(dock, &dock->rows[i])) count++;
-    }
-    return count;
+    return dock->row_count;
 }
 
 // Calculate the number of columns needed based on filtered rows.
 static int DockPopupColumns(const struct Dock *dock) {
     if (dock->popup_mode == DOCK_POPUP_ADD_MENU) return 1;
     int visible = DockFilteredRowCount(dock);
-    int cols = (visible + DOCK_POPUP_MAX_ROWS - 1) / DOCK_POPUP_MAX_ROWS;
+    int max_rows = DockMaxPopupRows(dock);
+    int cols = (visible + max_rows - 1) / max_rows;
     if (cols > DOCK_POPUP_MAX_COLUMNS) cols = DOCK_POPUP_MAX_COLUMNS;
     return cols > 0 ? cols : 1;
 }
@@ -403,25 +412,24 @@ static void DockPopupSize(const struct Dock *dock, int *width, int *height) {
     int row_height = DockRowHeight(dock);
     int rows_per_col = DockRowsPerColumn(dock);
     int cols = DockPopupColumns(dock);
+    int max_rows = DockMaxPopupRows(dock);
 
-    *height = rows_per_col * row_height + (dock->popup_mode == DOCK_POPUP_FOLDER || dock->popup_mode == DOCK_POPUP_PICKER ? DOCK_POPUP_ROW_HEIGHT : 0);
+    // The drawing is capped at max_rows per column, so height must match.
+    if (rows_per_col > max_rows) rows_per_col = max_rows;
+    *height = rows_per_col * row_height;
 
     // For folder/picker popups, calculate dynamic width based on content.
     // For add menu, use fixed width.
     if (dock->popup_mode == DOCK_POPUP_ADD_MENU) {
         *width = DOCK_ADD_MENU_WIDTH;
     } else {
-        // Calculate width based on longest label in filtered rows.
+        // Calculate width based on longest label in rows.
         int max_label_width = 0;
-        int filtered = DockFilteredRowCount(dock);
-        int count = 0;
-        for (int i = 0; i < dock->row_count && count < filtered; i++) {
+        for (int i = 0; i < dock->row_count; i++) {
             struct DockRow *row = &dock->rows[i];
-            if (!RowMatchesSearch(dock, &dock->rows[i])) continue;
             if (!row->label) continue;
             int label_width = FontTextWidth(row->label, 2) + 28; // icon + padding
             if (label_width > max_label_width) max_label_width = label_width;
-            count++;
         }
         int col_width = max_label_width + 12; // padding
         if (col_width < DOCK_POPUP_MIN_WIDTH) col_width = DOCK_POPUP_MIN_WIDTH;
@@ -434,8 +442,8 @@ static void DockPopupSize(const struct Dock *dock, int *width, int *height) {
 // covers only the part of the screen where it is.
 static bool DockCreatePopupWindow(struct Dock *dock) {
     if (dock->popup_window) return true;
-    int width = dock->popup_width;
-    int height = DockVisibleRows(dock) * DockRowHeight(dock);
+    int width = 0, height = 0;
+    DockPopupSize(dock, &width, &height);
     dock->popup_window = PlatformCreateDockPopupWindow(width, height);
     if (!dock->popup_window) {
         LOG_WARN("the window of the popup could not be created");
@@ -461,11 +469,8 @@ static void DockShowPopup(struct Dock *dock) {
 
     int width = 0, height = 0;
     DockPopupSize(dock, &width, &height);
-    if (width != dock->popup_width || height != dock->popup_height) {
-        dock->popup_width = width;
-        dock->popup_height = height;
-        SDL_SetWindowSize(dock->popup_window, width, height);
-    }
+    dock->popup_width = width;
+    dock->popup_height = height;
     // The popup hangs below the bar.
     dock->popup_x = DOCK_ADD_BUTTON1_X;
     dock->popup_y = dock->window_y + dock->height;
@@ -603,8 +608,11 @@ void DockUpdate(struct Context *context, struct Dock *dock) {
         dock->popup_y = dock->window_y + dock->height;
         PlatformSetDockPosition(dock->popup_window, dock->popup_x, dock->popup_y);
         // Showing a window can change its place in the z-order, so the popup
-        // is put above the desktop again.
-        PlatformPlaceDockPopupWindow(dock->popup_window);
+        // is put above the desktop again, but only once after it is shown.
+        if (!dock->popup_placed) {
+            PlatformPlaceDockPopupWindow(dock->popup_window);
+            dock->popup_placed = true;
+        }
     }
 }
 
@@ -634,35 +642,23 @@ static int DockRowAt(const struct Dock *dock, int screen_x, int screen_y) {
     if (screen_x < dock->popup_x || screen_x >= dock->popup_x + dock->popup_width) return -1;
     
     int row_height = DockRowHeight(dock);
-    bool has_search = dock->popup_mode == DOCK_POPUP_FOLDER || dock->popup_mode == DOCK_POPUP_PICKER;
-    int search_height = has_search ? row_height : 0;
-    
-    // Check if click is in the search field
-    if (has_search && screen_y < dock->popup_y + search_height) {
-        // Click in search field - we'll handle this separately
-        return -2;
-    }
 
     // For folder/picker popups with multi-column layout
     if (dock->popup_mode == DOCK_POPUP_FOLDER || dock->popup_mode == DOCK_POPUP_PICKER) {
-        // Build filtered list of visible row indices
-        int visible_indices[DOCK_POPUP_MAX_ROWS * DOCK_POPUP_MAX_COLUMNS];
+        // Build list of visible row indices (all rows are visible now, no search filter)
+        int visible_indices[DOCK_MAX_VISIBLE_ITEMS];
         int visible_count = 0;
         for (int i = 0; i < dock->row_count; i++) {
-            if (RowMatchesSearch(dock, &dock->rows[i])) {
-                if (visible_count < (int)(sizeof(visible_indices)/sizeof(visible_indices[0]))) {
-                    visible_indices[visible_count++] = i;
-                }
+            if (visible_count < (int)(sizeof(visible_indices)/sizeof(visible_indices[0]))) {
+                visible_indices[visible_count++] = i;
             }
         }
         if (visible_count == 0) return -1;
         
         int cols = DockPopupColumns(dock);
         int rows_per_col = DockRowsPerColumn(dock);
-        int row_height = DockRowHeight(dock);
-        int search_height = row_height; // folder/picker always has search
         
-        int rel_y = screen_y - dock->popup_y - search_height;
+        int rel_y = screen_y - dock->popup_y;
         if (rel_y < 0) return -1;
         int row_in_col = rel_y / row_height;
         if (row_in_col < 0) return -1;
@@ -674,7 +670,22 @@ static int DockRowAt(const struct Dock *dock, int screen_x, int screen_y) {
         int col = rel_x / col_width;
         if (col >= cols) col = cols - 1;
         
-        int visible_index = col * rows_per_col + row_in_col;
+        // Calculate the actual start and end index for this column.
+        // The first 'remainder' columns have rows_per_col items, the rest have rows_per_col - 1.
+        int remainder = visible_count % cols;
+        int col_start = col * rows_per_col;
+        if (col >= remainder) {
+            col_start = remainder * rows_per_col + (col - remainder) * (rows_per_col - 1);
+        }
+        int col_end = col_start + rows_per_col;
+        if (col >= remainder) col_end--;
+        if (col_end > visible_count) col_end = visible_count;
+        int col_rows = col_end - col_start;
+        
+        // Check if the clicked row is within the actual items of this column.
+        if (row_in_col >= col_rows) return -1;
+        
+        int visible_index = col_start + row_in_col;
         if (visible_index >= visible_count) return -1;
         return visible_indices[visible_index];
     }
@@ -722,7 +733,15 @@ static void DockClickRow(struct Dock *dock, int index) {
     }
     if (row->is_dir) {
         // A folder of the list: it is shown.
-        DockOpenFolderPopup(dock, row->path, dock->popup_mode);
+        // Double-check it's actually a directory (some files like .rpf archives
+        // may have the directory attribute on Windows).
+        if (DirIsFolder(row->path)) {
+            DockOpenFolderPopup(dock, row->path, dock->popup_mode);
+        } else {
+            // It's a file with directory attribute - launch it
+            DockClosePopup(dock);
+            LauncherOpenFile(row->path);
+        }
         return;
     }
     // A file. In the picker it is added to the bar, in the list of a folder it
@@ -748,13 +767,6 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
         }
         return;
     }
-
-    // Allow keyboard events when the search field is active
-    bool handle_keyboard = dock->popup_search_active;
-    if (event->type != SDL_MOUSEMOTION && event->type != SDL_MOUSEBUTTONDOWN &&
-        event->type != SDL_MOUSEWHEEL && !handle_keyboard) {
-        return;
-    }
     // The position of the mouse on the screen, which is asked for from the
     // system: the bar has no focus, so it does not get the mouse events of
     // the desktop.
@@ -774,35 +786,6 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
             dock->row_hover = DockRowAt(dock, screen_x, screen_y);
             break;
 
-        case SDL_KEYDOWN:
-            if (!dock->popup_search_active) break;
-            if (event->key.keysym.sym == SDLK_ESCAPE) {
-                dock->popup_search_active = false;
-                break;
-            }
-            if (event->key.keysym.sym == SDLK_BACKSPACE && dock->popup_search) {
-                size_t len = strlen(dock->popup_search);
-                if (len > 0) {
-                    dock->popup_search[len - 1] = '\0';
-                    dock->row_scroll = 0;
-                    dock->row_hover = -1;
-                }
-            }
-            break;
-
-        case SDL_TEXTINPUT:
-            if (!dock->popup_search_active) break;
-            if (dock->popup_search) {
-                size_t len = strlen(dock->popup_search);
-                size_t add_len = strlen(event->text.text);
-                if (len + add_len < 255) {
-                    strcat(dock->popup_search, event->text.text);
-                    dock->row_scroll = 0;
-                    dock->row_hover = -1;
-                }
-            }
-            break;
-
         case SDL_MOUSEBUTTONDOWN: {
             if (event->button.button != SDL_BUTTON_LEFT) break;
             dock->last_input_ms = SDL_GetTicks64();
@@ -814,22 +797,9 @@ void DockHandleEvent(struct Context *context, struct Dock *dock, const SDL_Event
                 break;
             }
 
-            // Click in search field deactivates it if clicking elsewhere
-            if (dock->popup_search_active) {
-                int row = DockRowAt(dock, screen_x, screen_y);
-                if (row != -2) {
-                    dock->popup_search_active = false;
-                }
-            }
-
             // The rows of the popup. The menu of the add button is a popup
             // as well, so it is handled here too.
             int row = DockRowAt(dock, screen_x, screen_y);
-            if (row == -2) {
-                // Click in the search field - activate it
-                dock->popup_search_active = true;
-                break;
-            }
             if (row >= 0) {
                 if (dock->popup_mode == DOCK_POPUP_ADD_MENU) {
                     if (row == 0) {

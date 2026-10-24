@@ -32,13 +32,6 @@
 // text is readable.
 #define FONT_SCALE 2
 
-// The number of the rows of the popup that are shown.
-static int DockUiVisibleRows(const struct Dock *dock) {
-    int rows = dock->row_count;
-    if (rows > DOCK_POPUP_MAX_ROWS) rows = DOCK_POPUP_MAX_ROWS;
-    return rows;
-}
-
 // Draws a filled rectangle.
 static void FillRect(SDL_Renderer *renderer, int x, int y, int w, int h,
                      uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
@@ -188,30 +181,24 @@ void DockUiDrawPopup(struct Dock *dock) {
     int row_height = dock->popup_mode == DOCK_POPUP_ADD_MENU ? DOCK_ADD_MENU_ROW_HEIGHT
                                                             : DOCK_POPUP_ROW_HEIGHT;
 
-    // For folder popups, we have a search field at the top
-    bool has_search = dock->popup_mode == DOCK_POPUP_FOLDER || dock->popup_mode == DOCK_POPUP_PICKER;
-    int search_height = has_search ? DOCK_POPUP_ROW_HEIGHT : 0;
-
     int cols = 1;
     int rows_per_col = 0;
-    int visible_indices[DOCK_POPUP_MAX_ROWS * DOCK_POPUP_MAX_COLUMNS];
+    int visible_indices[DOCK_MAX_VISIBLE_ITEMS];
     int visible_count = 0;
     bool is_menu = dock->popup_mode == DOCK_POPUP_ADD_MENU;
 
-    // Build filtered list of rows matching search
+    // Build list of visible row indices (all rows are visible now, no search filter)
     for (int i = 0; i < dock->row_count; i++) {
-        struct DockRow *row = &dock->rows[i];
-        if (RowMatchesSearch(dock, row)) {
-            if (visible_count < (int)(sizeof(visible_indices)/sizeof(visible_indices[0]))) {
-                visible_indices[visible_count++] = i;
-            }
+        if (visible_count < (int)(sizeof(visible_indices)/sizeof(visible_indices[0]))) {
+            visible_indices[visible_count++] = i;
         }
     }
 
     if (!is_menu) {
         // Calculate columns based on visible rows
         int visible = visible_count;
-        int cols_calc = (visible + DOCK_POPUP_MAX_ROWS - 1) / DOCK_POPUP_MAX_ROWS;
+        int max_rows = DockMaxPopupRows(dock);
+        int cols_calc = (visible + max_rows - 1) / max_rows;
         if (cols_calc > DOCK_POPUP_MAX_COLUMNS) cols_calc = DOCK_POPUP_MAX_COLUMNS;
         cols = cols_calc > 0 ? cols_calc : 1;
     } else {
@@ -224,39 +211,28 @@ void DockUiDrawPopup(struct Dock *dock) {
     FillRect(renderer, 0, 0, dock->popup_width, dock->popup_height,
              COLOR_POPUP_R, COLOR_POPUP_G, COLOR_POPUP_B, 255);
 
-    // Draw the search field at the top (spans all columns)
-    if (has_search) {
-        // Search field background
-        FillRect(renderer, 2, 2, dock->popup_width - 4, search_height - 4,
-                 COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B, 60);
-        // Search field border (highlight if active)
-        uint8_t br = dock->popup_search_active ? COLOR_ACCENT_R : COLOR_TEXT_R;
-        uint8_t bg = dock->popup_search_active ? COLOR_ACCENT_G : COLOR_TEXT_G;
-        uint8_t bb = dock->popup_search_active ? COLOR_ACCENT_B : COLOR_TEXT_B;
-        FillRect(renderer, 2, 2, dock->popup_width - 4, 1, br, bg, bb, 255);
-        FillRect(renderer, 2, search_height - 3, dock->popup_width - 4, 1, br, bg, bb, 255);
-        FillRect(renderer, 2, 2, 1, search_height - 4, br, bg, bb, 255);
-        FillRect(renderer, dock->popup_width - 3, 2, 1, search_height - 4, br, bg, bb, 255);
-        // Search text
-        int text_y = 2 + (search_height - FONT_HEIGHT * FONT_SCALE) / 2;
-        char search_label[256];
-        snprintf(search_label, sizeof(search_label), "Search: %s", dock->popup_search ? dock->popup_search : "");
-        DrawRowLabel(renderer, search_label, 10, text_y,
-                     dock->popup_width - 16, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
-    }
-
     // Calculate column width
     int col_width = cols > 0 ? dock->popup_width / cols : dock->popup_width;
 
     // Draw rows in columns
     for (int col = 0; col < cols; col++) {
+        // Calculate the actual start and end index for this column.
+        int remainder = visible_count % cols;
+        int col_start = col * rows_per_col;
+        if (col >= remainder) {
+            col_start = remainder * rows_per_col + (col - remainder) * (rows_per_col - 1);
+        }
+        int col_end = col_start + rows_per_col;
+        if (col >= remainder) col_end--;
+        if (col_end > visible_count) col_end = visible_count;
+        int col_rows = col_end - col_start;
+
         int col_x = col * col_width;
-        for (int row_in_col = 0; row_in_col < rows_per_col; row_in_col++) {
-            int index = col * rows_per_col + row_in_col;
-            if (index >= visible_count) break;
+        for (int row_in_col = 0; row_in_col < col_rows; row_in_col++) {
+            int index = col_start + row_in_col;
             int idx = visible_indices[index];
             struct DockRow *row = &dock->rows[idx];
-            int row_y = search_height + row_in_col * row_height;
+            int row_y = row_in_col * row_height;
 
             // Draw hover highlight across the column
             if (idx == dock->row_hover) {
@@ -270,8 +246,10 @@ void DockUiDrawPopup(struct Dock *dock) {
                 if (!row->is_up && !row->is_add_dir) {
                     DrawIcon(renderer, col_x + 6, row_y + 4, row->is_dir,
                              COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);
+                    text_x = 22;
                 }
-                text_x = 22;
+                // For ".." row (is_up) and "Add this folder" row (is_add_dir),
+                // keep text_x = 8 (left-aligned)
             }
             DrawRowLabel(renderer, row->label, col_x + text_x, text_y,
                          col_width - text_x - 6, COLOR_TEXT_R, COLOR_TEXT_G, COLOR_TEXT_B);

@@ -82,9 +82,6 @@ struct DockRow {
 // The height of a row of the popup below the bar, in pixels.
 #define DOCK_POPUP_ROW_HEIGHT 20
 
-// The number of the rows of the popup that are shown at the same time in one column.
-#define DOCK_POPUP_MAX_ROWS 12
-
 // The minimum width of the popup, in pixels.
 #define DOCK_POPUP_MIN_WIDTH 240
 
@@ -106,6 +103,11 @@ int DockItemX(int index);
 
 // The maximum number of columns for the popup.
 #define DOCK_POPUP_MAX_COLUMNS 4
+
+// Maximum number of visible items that can be displayed (for array sizing).
+// Maximum rows per column is 48, max columns is 4, so 48 * 4 = 192.
+// Use 256 for safety margin.
+#define DOCK_MAX_VISIBLE_ITEMS 256
 
 // The whole state of the bar.
 struct Dock {
@@ -134,14 +136,13 @@ struct Dock {
     SDL_Window *popup_window;     // the window of the popup
     SDL_Renderer *popup_renderer; // its renderer
     char *popup_folder;           // the folder that is shown
-    char *popup_search;           // the search text for filtering
-    bool popup_search_active;     // whether the search field has focus
     struct DockRow *rows;         // the rows of the popup
     int row_count;
     int row_hover;                // the row under the mouse
     int row_scroll;               // the first row that is shown
     int popup_x, popup_y;         // the position of the popup on the screen
     int popup_width, popup_height; // the size of the popup
+    bool popup_placed;            // the popup z-order has been fixed
 
     int screen_mouse_x, screen_mouse_y;  // the position of the mouse on the screen
     int mouse_x, mouse_y;         // the position of the mouse in the window
@@ -152,26 +153,9 @@ struct Dock {
     int timeout_ms;               // after how many ms the bar hides itself
 };
 
-// Checks if a row matches the search text. Case-insensitive substring match.
-// Must be after struct Dock definition so the type is complete.
-static inline bool RowMatchesSearch(const struct Dock *dock, const struct DockRow *row) {
-    if (!dock->popup_search || !*dock->popup_search) return true;
-    if (!row->label) return false;
-    // Case-insensitive search
-    char *label_lower = strdup(row->label);
-    char *search_lower = strdup(dock->popup_search);
-    if (!label_lower || !search_lower) {
-        if (label_lower) free(label_lower);
-        if (search_lower) free(search_lower);
-        return false;
-    }
-    for (char *p = label_lower; *p; p++) *p = tolower(*p);
-    for (char *p = search_lower; *p; p++) *p = tolower(*p);
-    bool match = strstr(label_lower, search_lower) != NULL;
-    free(label_lower);
-    free(search_lower);
-    return match;
-}
+// Computes the maximum rows per column that fit on screen.
+// The dock bar is at the top, popup hangs below it.
+int DockMaxPopupRows(const struct Dock *dock);
 
 // The options of the bar, that come from the command line.
 struct DockOptions {

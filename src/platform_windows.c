@@ -1056,7 +1056,6 @@ static void PlaceDockWindowAboveDesktop(SDL_Window *window) {
     }
     SetWindowPos(dock_hwnd, above ? above : HWND_TOP, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    LOG_DEBUG("the bar of the dock was placed above the desktop");
 }
 
 // Puts the bar of the dock directly above the window of the desktop.
@@ -1129,7 +1128,6 @@ void PlatformPlaceDockPopupWindow(SDL_Window *window) {
                 // Place popup just above the dock bar in z-order
                 SetWindowPos(popup_hwnd, dock_hwnd, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-                LOG_DEBUG("the dock popup was placed above the dock bar");
                 return;
             }
         }
