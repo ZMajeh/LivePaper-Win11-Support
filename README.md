@@ -24,6 +24,8 @@ Simply run live-paper.exe. On its first run, LivePaper will open a window to cho
 
 Note that if LivePaper quits due to an error, the remembered wallpaper file will be cleared. The next time the app is started, you will need to choose the wallpaper file again.
 
+![Desktop interaction: RMB/LMB work on desktop](assets/RMB_LMB_OnDesktop_works.png)
+
 ### The bar of the dock
 
 LivePaper shows a small bar at the top of the screen. It slides down when the mouse
@@ -31,24 +33,26 @@ reaches the top of the screen and it goes away again when the mouse leaves it.
 
 ![The bar of the dock](assets/dock.png)
 
-The bar has a button with a cross on the left, the files and the folders that were
-added to it in the middle, and the state of the system on the right: the load of
-the processor, the used memory, the speed of the network, the load of the disks
-and the time.
+The bar has two **add buttons** on the left (labeled "F" for *Add file* and a folder icon for *Add folder*), the files and the folders that were added to it in the middle, and the state of the system on the right: the load of the processor, the used memory, the speed of the network, the load of the disks and the time.
 
-* The **cross** opens a menu with two options: *File browser* opens the file
-  manager of Windows, and *Add file or folder* opens a list of the files, in
-  which a file or a folder can be chosen. The chosen file is added to the bar:
-  clicking it opens it with the program that belongs to it. A folder that is
-  added shows the files inside it when it is clicked, and clicking a file in the
-  list opens it.
-* The **items** of the bar are remembered between the runs, in the file
-  `dock.txt` next to the other settings of the program.
-* The **details** on the right are sampled once per second, so that the program
-  stays quiet.
+* The **Add file** button (labeled "F") opens a native Windows file dialog to pick a file. The chosen file is added to the bar: clicking it opens it with the program that belongs to it.
+* The **Add folder** button (with a folder icon) opens a native Windows folder dialog to pick a folder. The chosen folder is added to the bar: clicking it shows a popup window with all files in that folder.
+
+![Add folder dialog](assets/add_folder_popup.png)
+
+* Clicking a **folder item** on the bar opens a multi-column popup window below the bar showing all files and subfolders. The popup has a **search field** at the top for case-insensitive filtering. Clicking a subfolder in the popup navigates into that folder (opens another popup).
+
+![Folder popup with multi-column layout and search](assets/popup_for_folder.png)
+
+* The **items** of the bar are remembered between runs, in the file `dock.txt` next to the other settings of the program.
+* The **details** on the right are sampled once per second, so that the program stays quiet. This includes CPU load, **RAM usage**, network speed, disk activity, and the current time.
+
+![System details showing RAM usage](assets/ram_use_space.png)
 
 The bar can be switched off and on again with the item *Dock bar* of the tray
 menu, or with the option `--no-dock` when the program is started.
+
+> **Note:** On Linux the add buttons currently open a menu with two options (*File browser* and *Add file or folder*) instead of native dialogs. Native file dialogs are planned for Linux as well.
 
 #### Start LivePaper automatically on Windows 11
 
