@@ -26,6 +26,18 @@ Note that if LivePaper quits due to an error, the remembered wallpaper file will
 
 ![Desktop interaction: RMB/LMB work on desktop](assets/RMB_LMB_OnDesktop_works.png)
 
+**Desktop mouse interaction:** Right-click (RMB) and left-click (LMB) on the desktop work normally. The wallpaper window is placed behind the desktop icons, so clicking on the desktop background or icons passes through to the Windows shell. You can still select, drag, and open desktop icons as usual. The dock bar at the top of the screen only receives mouse events when you hover over it.
+
+### Tray icon menu
+
+The tray icon in the notification area provides quick access to LivePaper's controls:
+
+![Tray menu](assets/taskbar_menu.png)
+
+* **Dock bar** — A checkable item that toggles the dock bar on/off. When checked (default), the bar is visible and slides down on mouse hover. Uncheck it to hide the bar completely; check it again to restore it. This is equivalent to the `--no-dock` command-line option.
+* **Set wallpaper...** — Opens a file dialog to choose a new video/GIF wallpaper.
+* **Quit** — Exits LivePaper and restores the default Windows wallpaper.
+
 ### The bar of the dock
 
 LivePaper shows a small bar at the top of the screen. It slides down when the mouse
